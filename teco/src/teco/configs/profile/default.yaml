@@ -1,0 +1,72 @@
+# @package _global_
+# The supervised DAG.
+#
+# A profile is a *shape*, not a model: which commands run, and which artifact each one consumes. The model
+# itself is `src/teco/model.py`, which the template leaves for you to write.
+#
+# `chain` below is the authoritative description of this shape, and the template's render tests assert it
+# matches `commands.py` exactly — the two cannot drift.
+#
+# A task is not a pipeline stage: every command that needs one takes `external_labels_dir` directly,
+# because that is already what MEDS-DEV hands a model.
+#
+# Loaded last in every command's defaults list, so anything set here wins over the generic defaults. Put
+# model-specific overrides here; leave the artifact sources unset (they are per-run, and a wrong default
+# would silently point a run at the wrong artifact).
+
+profile:
+  name: supervised
+  chain:
+    - preprocess_data
+    - supervised_train
+    - predict
+  notes: >-
+    Train a task model from scratch on the tokenized cohort. `predict` takes input_supervised_model_dir.
+
+# ----------------------------------------------------------------------------------------------------
+# TECO's published training setup. Kept here rather than in the template-managed groups because these are
+# the paper's numbers, not preferences, and this file is the one `copier update` never touches.
+# The architecture and the LR schedule live in `model/default.yaml`; the optimizer in `optimizer/sgd.yaml`.
+# ----------------------------------------------------------------------------------------------------
+
+trainer:
+  #: "a maximum of 500 epochs" — a maximum, which is why early stopping below is not optional.
+  #: `gradient_clip_val: 1.0` in `trainer/default.yaml` already matches the paper's clipping.
+  max_epochs: 500
+
+  #: The paper reports no seeding or determinism settings, so these are additions rather than ports —
+  #: without them a run cannot be repeated, and an unrepeatable number supports nothing. `warn` asks for
+  #: deterministic kernels and warns where none exists rather than killing the run; `benchmark: false`
+  #: stops cuDNN choosing algorithms by timing.
+  #:
+  #: Measured (IMPLEMENTATION_REPORT.md §6.4): with these settings and `seed`, two runs at one seed are
+  #: **bit-identical on CPU and not on CUDA** — `warn` warns rather than failing, so it changes nothing
+  #: measurable there. `trainer.deterministic=true` does close it (four identical runs, and on
+  #: torch 2.13/CUDA 13 it needed no `CUBLAS_WORKSPACE_CONFIG`). **Set it when quoting a GPU number.** It
+  #: is not the default because `true` *raises* where an op has no deterministic kernel, which depends on
+  #: the machine, and a reproducibility setting should not be able to kill someone else's run.
+  deterministic: warn
+  benchmark: false
+
+  #: Full fp32 — torch's own default, and TECO's, stated here so the tradeoff is visible and so
+  #: `trainer.precision=bf16-mixed` composes without Hydra's `+` (configs are struct mode).
+  #: `torch.set_float32_matmul_precision` is left at torch's `highest`; the paper ran on a V100, which
+  #: has no TF32 path, so there is nothing to match.
+  precision: 32-true
+
+callbacks:
+  #: "stop early if the validation loss did not change by more than 1e-4 after 100 epochs".
+  early_stopping:
+    _target_: lightning.pytorch.callbacks.EarlyStopping
+    monitor: val/loss
+    mode: min
+    min_delta: 1.0e-4
+    patience: 100
+
+datamodule:
+  config:
+    #: TECO concatenates the baseline variables (age, sex, ethnicity, race) onto *every* interval, so the
+    #: batch has to carry them. The template's datamodule defaults to OMIT, which would drop them
+    #: silently: `IntervalGrid.static_embedding` would return None and the model would train on the
+    #: time-dependent variables alone.
+    static_inclusion_mode: INCLUDE

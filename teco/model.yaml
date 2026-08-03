@@ -1,0 +1,35 @@
+## MEDS-DEV model specification for TECO (the supervised DAG).
+##
+## MEDS-DEV runs each command string in an isolated environment (built from `requirements.txt`) and fills
+## the {curly} placeholders. Only `supervised.predict` is mandatory.
+##
+## Two facts about MEDS-DEV shape what follows:
+##
+##  * There is no preprocess slot, so `preprocess_data` is folded into the first command of each chain,
+##    writing the shared workspace to {output_dir}/data.
+##  * `{model_initialization_dir}` is a single rolling pointer: it becomes the most recent *training*
+##    output. For a chain with both an unsupervised and a supervised train, that is not where the
+##    workspace lives — so `predict` omits `input_data_dir` entirely and recovers it from its source
+##    model's manifest, which recorded the workspace that model was trained on.
+##
+## `labels_dir` is available in every `supervised.*` slot (it is gated on dataset type, not on the slot),
+## which is why no separate task-preparation step is needed: each command materializes what it needs.
+##
+## `metadata` is parsed into `MEDS_DEV.utils.Metadata`, which accepts exactly `description`, `contacts`
+## and `links` — nothing else. MEDS-DEV builds this at *import* time for every registered model, so an
+## extra key here raises TypeError and takes down the whole `meds-dev-*` CLI, not just this model.
+## In particular `requirements.txt` must NOT be declared: the loader discovers it from the model
+## directory on disk.
+metadata:
+  description: "Transformer-based Encounter-level Clinical Outcome (TECO) model for continuously updated ICU mortality prediction over MEDS data."
+  contacts:
+    - name: "Florent Pollet"
+      email: "ffp2106@cumc.columbia.edu"
+
+commands:
+  supervised:
+    train: |-
+      meds-model preprocess_data external_meds_dir={dataset_dir} output_data_dir={output_dir}/data do_overwrite=true
+      meds-model supervised_train input_data_dir={output_dir}/data external_labels_dir={labels_dir} output_supervised_model_dir={output_dir}/model
+    predict: |-
+      meds-model predict input_supervised_model_dir={model_initialization_dir}/model external_labels_dir={labels_dir} splits=[{split}] output_predictions_dir={output_dir} do_overwrite=true
