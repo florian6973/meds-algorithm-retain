@@ -17,6 +17,7 @@ source slurm/env.sh
 
 : "${MEDS_ROOT:?set MEDS_ROOT in slurm/env.sh (the MEDS dataset to train on)}"
 : "${LABELS_DIR:?set LABELS_DIR in slurm/env.sh (the MEDS labels directory to probe against)}"
+: "${GPU_PARTITION:?set GPU_PARTITION in slurm/env.sh — find it with: sinfo -o \"%P %G %l\" | grep -i gpu}"
 
 sbatch_common=(
   --output "$LOG_DIR/%x-%j.out"

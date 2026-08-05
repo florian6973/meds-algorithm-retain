@@ -62,10 +62,18 @@ recreate the environment with `uv venv --clear --python 3.12` and re-sync.
 ## Running on a cluster
 
 ```bash
-bash slurm/00_prefetch_encoder.sh   # once, on the LOGIN node — compute nodes are usually offline
 $EDITOR slurm/env.sh                # MEDS_ROOT, LABELS_DIR, OUTPUT_DIR, account, partition
+bash slurm/01_preflight.sh          # check the dataset BEFORE spending a GPU-day on it
+bash slurm/00_prefetch_encoder.sh   # once, on the LOGIN node — compute nodes are usually offline
 bash slurm/submit.sh                # preprocess -> pretrain -> infer+probe+predict, chained on afterok
 ```
+
+`01_preflight.sh` trains nothing and takes seconds. It exists for one question above all: **does
+`metadata/codes.parquet` have a `description` column?** PORTER's entire input pathway is that text. An
+extract without it still preprocesses, still trains, still produces an AUROC — and is not PORTER. The
+script prints the strings the frozen encoder will actually receive, so you can see what the model reads
+before you commit to it, and it also sizes `batch_size` against the 16,384-event budget from the real
+timeline lengths.
 
 `slurm/env.sh` is the only file to edit; every job sources it. The three things that most often go wrong
 on a cluster are handled there and worth knowing about:

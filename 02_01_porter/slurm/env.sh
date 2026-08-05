@@ -9,7 +9,10 @@
 # ----------------------------------------------------------------------------------------------------
 # Left empty on purpose: an account or partition that does not exist on your cluster is a confusing
 # failure, and a wrong one is worse. Fill in what `sacctmgr show assoc user=$USER` gives you.
-export SLURM_ACCOUNT="${SLURM_ACCOUNT:-}"
+export SLURM_ACCOUNT="${SLURM_ACCOUNT:-ffp2106}"
+# Still unset: you gave an account but not a partition. Find it with
+#   sinfo -o "%P %G %l" | grep -i gpu
+# `submit.sh` refuses rather than submitting to the cluster default, which may have no GPU at all.
 export GPU_PARTITION="${GPU_PARTITION:-}"
 export CPU_PARTITION="${CPU_PARTITION:-$GPU_PARTITION}"
 
@@ -31,13 +34,14 @@ export JOB_MEM="${JOB_MEM:-64G}"
 # Left empty rather than `${VAR:?...}`: this file is also sourced by `00_prefetch_encoder.sh`, which
 # needs neither, and a `:?` here aborts the very first documented step. `submit.sh` validates instead,
 # at the point where they are actually required.
-export MEDS_ROOT="${MEDS_ROOT:-}"
+export MEDS_ROOT="${MEDS_ROOT:-/groups/mm6677_gp/data/MIMIC_MEDS/MEDS_cohort}"
 
 # A MEDS labels directory (subject_id, prediction_time, boolean_value), e.g. from `meds-dev-task`.
-export LABELS_DIR="${LABELS_DIR:-}"
+export LABELS_DIR="${LABELS_DIR:-/groups/mm6677_gp/ffp2106/Git/meds-task-selection/work/labels/SUBJECT_FLUID_OUTPUT_226559_mL_7d}"
 
 # Everything this run writes. Use scratch, not home: the tensorized cohort and the checkpoints are large.
-export OUTPUT_DIR="${OUTPUT_DIR:-$PWD/runs/cluster}"
+# Scratch, not home: the tensorized MIMIC cohort plus checkpoints is tens of GB.
+export OUTPUT_DIR="${OUTPUT_DIR:-/groups/mm6677_gp/ffp2106/porter-runs/fluid_output_7d}"
 
 export DATA_DIR="${DATA_DIR:-$OUTPUT_DIR/data}"
 export PRETRAINED_DIR="${PRETRAINED_DIR:-$OUTPUT_DIR/models/pretrained}"
