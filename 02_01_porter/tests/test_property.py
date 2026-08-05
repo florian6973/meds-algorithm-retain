@@ -1,0 +1,57 @@
+"""Tier 3 — does the model actually learn? (``@slow``)
+
+The flagship correctness check, and the one that cannot be faked: build a synthetic MEDS dataset with a
+*designed* signal, run this model's whole DAG over it, and assert the signal is learned — paired with a
+**negative control** on shuffled labels so the test cannot pass vacuously. A model that scores well on both
+has learned nothing; the pair is the point.
+
+This is DAG-independent: `run_chain` follows whatever `commands.py` registers, so the same test applies to
+a supervised model, a fine-tune, a probe and a zero-shot model alike.
+
+Deselected in the fast CI job (`-m "not slow"`); run it before you claim the model works.
+"""
+
+import polars as pl
+import pytest
+from meds_model_base.testing import (
+    assert_learns_signal,
+    binary_auroc,
+    build_signal_dataset,
+    build_workspace,
+    skip_if_stub,
+)
+
+from porter.model import Model
+
+pytestmark = pytest.mark.slow
+
+
+def _predictions_for(chain, tmp_path, name: str, *, shuffle_labels: bool, seed: int):
+    """Build a synthetic dataset, run the DAG over it, and return (predictions, held-out labels)."""
+    raw = build_signal_dataset(tmp_path / f"raw_{name}", seed=seed, shuffle_labels=shuffle_labels)
+    labels_dir = raw / "task_labels" / "signal_task"
+    data_dir = build_workspace(raw, tmp_path / f"data_{name}")
+    artifacts = chain(data_dir, labels_dir, tmp_path / f"out_{name}", epochs=25, batch_size=16)
+    assert "predictions" in artifacts, "this DAG does not register `predict`, so it cannot be evaluated"
+    return (
+        pl.read_parquet(artifacts["predictions"] / "predictions.parquet"),
+        pl.read_parquet(raw / "task_labels" / "signal_task" / "held_out.parquet"),
+    )
+
+
+def test_learns_designed_signal(chain, tmp_path):
+    skip_if_stub(Model)
+    preds, held = _predictions_for(chain, tmp_path, "signal", shuffle_labels=False, seed=0)
+    # The signal is perfectly separable, so a working model reaches ≈1.0 — a bar much below that would
+    # pass a model that learned the signal only partially.
+    auroc = assert_learns_signal(preds, held, min_auroc=0.9)
+    assert auroc > 0.9
+
+
+def test_negative_control_does_not_learn(chain, tmp_path):
+    """Shuffled labels break the signal-label link, so a sound model must NOT score well here."""
+    skip_if_stub(Model)
+    preds, held = _predictions_for(chain, tmp_path, "control", shuffle_labels=True, seed=1)
+    joined = preds.join(held, on=["subject_id", "prediction_time"], how="inner")
+    ctrl = binary_auroc(joined["boolean_value"].to_list(), joined["predicted_boolean_probability"].to_list())
+    assert ctrl <= 0.70, f"negative control learned a shuffled signal (AUROC={ctrl:.3f}); test is unsound"

@@ -1,0 +1,32 @@
+# @package _global_
+# The probe DAG.
+#
+# A profile is a *shape*, not a model: which commands run, and which artifact each one consumes. The model
+# itself is `src/porter/model.py`, which the template leaves for you to write.
+#
+# `chain` below is the authoritative description of this shape, and the template's render tests assert it
+# matches `commands.py` exactly — the two cannot drift.
+#
+# A task is not a pipeline stage: every command that needs one takes `external_labels_dir` directly,
+# because that is already what MEDS-DEV hands a model.
+#
+# Loaded last in every command's defaults list, so anything set here wins over the generic defaults. Put
+# model-specific overrides here; leave the artifact sources unset (they are per-run, and a wrong default
+# would silently point a run at the wrong artifact).
+
+profile:
+  name: probe
+  chain:
+    - preprocess_data
+    - pretrain
+    - infer
+    - supervised_train
+    - predict
+  notes: >-
+    Frozen-representation probe, which is PORTER's own downstream protocol (arXiv:2606.24102 §2.7.1):
+    `pretrain` learns the temporal backbone by next-event prediction and discards its output head;
+    `infer` materializes one frozen representation per prediction timepoint; `supervised_train` fits an
+    L2-regularized logistic regression on them via input_inference_subdir; and `predict` recovers which
+    embeddings to score from the probe's own manifest. The foundation model is never re-run downstream.
+    The cached event-description embedding table is a buffer inside the pretrained checkpoint, so the
+    frozen text encoder is loaded exactly once, by `pretrain`.

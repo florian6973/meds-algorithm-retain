@@ -1,0 +1,29 @@
+defaults:
+  - config: MEDSTorchDataConfig
+  - _self_
+
+# Task-conditioned view of the cohort: one sample per (subject_id, prediction_time), with the sequence
+# ending at that timepoint (TO_END). Used by supervised_train, infer and predict.
+#
+# `task_labels_dir` is deliberately null here and set at runtime: the command materializes
+# external_labels_dir into its own work directory first, and that path is derived from the output
+# directory rather than expressible in config.
+_target_: meds_torchdata.extensions.lightning_datamodule.Datamodule
+config:
+  tensorized_cohort_dir: ${input_data_dir}/patients
+  task_labels_dir: null
+  max_seq_len: ${max_seq_len}
+  seq_sampling_strategy: TO_END
+  # arXiv:2606.24102 Table S3 renders demographics as ordinary timeline events ("Patient Sex: {sex}"),
+  # and PREPEND is exactly that: meds-torch-data puts the static measurements at the front of the dynamic
+  # sequence as one event with a time delta of 0. Nothing in `model.py` has to change — statics arrive in
+  # `batch.code` / `batch.numeric_value` like any other event, right-padding still holds, and `pooling:
+  # last` still lands on the final *dynamic* event.
+  #
+  # The env var exists because PREPEND raises "n_static_seq_els must be a positive integer" on a cohort
+  # with no static measurements at all, which is what the template's synthetic learnability fixture is
+  # (upstream MEDS_model_template#16). `tests/conftest.py` sets it to OMIT for that reason and no other.
+  # On real MEDS data leave it alone.
+  static_inclusion_mode: ${oc.env:PORTER_STATIC_INCLUSION,PREPEND}
+batch_size: ${batch_size}
+num_workers: ${num_workers}

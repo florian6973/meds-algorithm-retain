@@ -1,0 +1,89 @@
+# PORTER's encoder (arXiv:2606.24102): a frozen text-embedding table -> projection MLP -> FiLM numeric
+# pathway -> causal temporal Transformer. `_target_` points at the class in src/porter/model.py.
+#
+# **This is the published model, at the published scale.** 28 layers x 768 hidden x 12 heads = 115.6 M
+# backbone parameters (§2.4.3, Supplementary Table S4), checked exactly by
+# `porter.model.backbone_parameter_count`. Running `meds-model pretrain` with no overrides runs PORTER.
+#
+# It needs a GPU. `model=small` is a 0.46 M toy of the same shape for smoke-testing on a laptop, and is
+# what the test suite runs (see tests/conftest.py) — never report a number from it.
+#
+# Built by `pretrain`. `infer` and `predict` rebuild it from the *checkpoint's* own hyperparameters
+# (`_runtime.load_trained_module` reads `module_class` from the artifact manifest), so overriding
+# `model.*` on those two commands has no effect.
+#
+# `vocab_size` is NOT set here: the training commands inject it from `datamodule.config.vocab_size`, so
+# the text table always matches the workspace the run is reading.
+_target_: porter.model.Model
+optimizer: ${optimizer}
+scheduler: null
+
+# Where the event descriptions come from (paper §2.4.1). Read exactly ONCE, by `pretrain`: it is excluded
+# from `save_hyperparameters`, and the encoded table is a persistent buffer, so it rides inside the
+# checkpoint and `infer`/`predict` reload without importing sentence-transformers or hitting the network.
+code_metadata_fp: ${input_data_dir}/patients/metadata/codes.parquet
+
+# §2.4.1: BioLORD-2023, chosen over BGE-M3 (1024-d) and Qwen3-Embedding-8B (4096-d) on pretraining
+# validation loss. Downloaded from HuggingFace on first use and cached under $HF_HOME.
+# `random` selects §2.6.1's own non-semantic control arm (PORTER-Random) and needs no network; set
+# `d_text` to match whatever encoder you name (a mismatch is an error, not a silent reshape).
+text_encoder: FremyCompany/BioLORD-2023
+d_text: 768
+
+# The published geometry, merged over `porter.model.PAPER_BACKBONE`.
+#
+# The `oc.env` indirection exists for one reason: the conformance and learnability tiers have to run a
+# small model on CPU, and `meds_model_base.testing.run_chain` builds its own command line and cannot pass
+# `model=small`. `tests/conftest.py` sets these variables; nothing else does. Leave them unset — for a
+# real run they are not part of the interface, `model=small` and `model.backbone.*=` are.
+#
+# If you do set one, set it to a plain integer. These interpolations are lazy, so a non-numeric or empty
+# value is not caught at startup: it raises when the config is *resolved*, which for `infer` is after the
+# forward passes, at artifact-publish time. `tests/test_default_is_the_paper.py` pins what the unset
+# defaults compose to.
+backbone:
+  hidden_size: ${oc.decode:${oc.env:PORTER_HIDDEN_SIZE,768}}
+  num_hidden_layers: ${oc.decode:${oc.env:PORTER_NUM_LAYERS,28}}
+  num_attention_heads: ${oc.decode:${oc.env:PORTER_NUM_HEADS,12}}
+  # §2.4.3 / Table S4: the FFN intermediate size equals the hidden size.
+  intermediate_size: ${oc.decode:${oc.env:PORTER_INTERMEDIATE_SIZE,768}}
+  # Table S4 "Attention width 128": odd-numbered layers attend only to the 128 most recent events.
+  local_attention_window: 128
+
+# How the sliding-window layers are computed. `auto` uses a block-sparse (flex_attention) kernel on CUDA
+# once the sequence is long, and a dense L x L band mask otherwise — at the paper's 16,384-event context
+# that mask is 268 MB, so the kernel is what makes full context practical. `dense` forces the reference
+# implementation; `flex` forces the kernel and raises instead of falling back. The global layers never
+# build a mask at all (right padding + causality makes one unnecessary), which is what lets PyTorch serve
+# them from a FlashAttention kernel.
+attention_impl: auto
+
+# §2.4.2: "two 128-dimensional fully connected layers and GELU activations".
+numeric_hidden: 128
+
+# meds-torch-data z-scores `numeric_value` per code during tensorization, but PORTER's numeric scalar is
+# defined on the raw value. Invert that transform using the same per-code statistics, so `log(1+|v|)/7`
+# sees a clinical magnitude rather than a standard deviation. Set false to feed the z-score through.
+denormalize_numeric_values: true
+
+# §2.4.4: the pretraining target is a *composite* token — the concept ID combined with the numeric value
+# discretized into 10 quantile bins "where applicable". Only the label is quantized; the input pathway
+# stays language-grounded and continuous, which is the distinction between PORTER and its NumText
+# ablation. The per-code bin boundaries come from `values/quantiles` in the tensorized code metadata,
+# which `pipelines/quantiles.yaml` fits — without that column every code gets one class and the target
+# degrades to the bare code. Set 1 to disable quantization entirely.
+value_bins: 10
+
+# RoPE over patient age in days (§2.4.3). Neither the base nor any scaling of the age is stated by the
+# paper; both are exposed here rather than hidden as constants.
+rope_theta: 10000.0
+rope_time_scale: 1.0
+
+# §2.7.1 extracts "hidden states ... at prediction time"; the task datamodule samples TO_END, so the last
+# non-padding position is that timepoint. `mean` pools over the whole window instead.
+pooling: last
+
+# Table S4: 150 warmup steps under `cosine_with_min_lr`. Clamped to a tenth of the run — see
+# `Model.configure_optimizers`. The floor of the cosine is never given in the paper.
+warmup_steps: 150
+min_lr_ratio: 0.1

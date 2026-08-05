@@ -1,0 +1,48 @@
+# A small PORTER of the published *shape*, for smoke tests and laptops. Select with `model=small`.
+#
+# Every ratio the paper fixes is preserved — intermediate == hidden, head_dim = hidden / heads,
+# alternating global/local starting global, window 128 — at 1/6 the width and 1/7 the depth: 0.46 M
+# backbone parameters against the published 115.6 M, a factor of 250.
+#
+# **This is a test fixture, not a model.** No number produced with it is comparable to anything. The
+# conformance and learnability tiers run this geometry (through the `PORTER_*` environment variables in
+# tests/conftest.py, because the shared test harness builds its own command line and cannot pass
+# `model=small`); `model/default.yaml` is the real thing.
+#
+# Everything except `backbone` is identical to `model/default.yaml`.
+_target_: porter.model.Model
+optimizer: ${optimizer}
+scheduler: null
+
+code_metadata_fp: ${input_data_dir}/patients/metadata/codes.parquet
+
+text_encoder: FremyCompany/BioLORD-2023
+d_text: 768
+
+backbone:
+  hidden_size: 128
+  num_hidden_layers: 4
+  num_attention_heads: 4
+  intermediate_size: 128
+  local_attention_window: 128
+
+attention_impl: auto
+
+numeric_hidden: 128
+denormalize_numeric_values: true
+
+# §2.4.4: the pretraining target is a *composite* token — the concept ID combined with the numeric value
+# discretized into 10 quantile bins "where applicable". Only the label is quantized; the input pathway
+# stays language-grounded and continuous, which is the distinction between PORTER and its NumText
+# ablation. The per-code bin boundaries come from `values/quantiles` in the tensorized code metadata,
+# which `pipelines/quantiles.yaml` fits — without that column every code gets one class and the target
+# degrades to the bare code. Set 1 to disable quantization entirely.
+value_bins: 10
+
+rope_theta: 10000.0
+rope_time_scale: 1.0
+
+pooling: last
+
+warmup_steps: 150
+min_lr_ratio: 0.1

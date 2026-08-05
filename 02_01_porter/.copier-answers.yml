@@ -1,0 +1,15 @@
+# This file is auto-managed by Copier; do not edit by hand.
+# Running `copier update` uses it to re-render the template into this repo.
+_commit: 496ab52
+_src_path: ./MEDS_model_template
+author_email: flo1.raymond@gmail.com
+author_name: Florent Pollet
+model_description: 'PORTER: language-grounded event representations for portable structured
+    EHR foundation models — a frozen text-encoder input pathway feeding an autoregressive
+    temporal Transformer, probed with L2 logistic regression.'
+model_name: PORTER
+model_slug: porter
+profile: probe
+python_version: '3.12'
+use_mlflow: false
+use_wandb: false

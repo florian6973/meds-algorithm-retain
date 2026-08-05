@@ -1,0 +1,47 @@
+# @package _global_
+# infer: materialize reusable per-timepoint outputs from a pretrained model.
+# What is produced (embeddings, trajectories, hazards, scores) is the model's choice, not an argument;
+# the kind is recorded in the artifact manifest so consumers can validate it.
+defaults:
+  - paths: default
+  - datamodule: task
+  - model: default
+  - trainer: default
+  - optimizer: porter
+  - _self_
+  - profile: default
+
+input_data_dir: ${data_dir}
+input_pretrained_model_dir: ${models.pretrained}
+output_inference_subdir: ${inference.embeddings}
+
+#: Fixes the timepoints to infer at.
+#: A MEDS labels directory: any arrangement of *.parquet carrying
+#: (subject_id, prediction_time, boolean_value). `meds-dev-task` writes train/0.parquet,
+#: tuning/0.parquet, held_out/0.parquet -- those names are input *shard* names, not splits, and are
+#: not read as such: which split a subject belongs to comes from the tokenized cohort in
+#: input_data_dir. Dot-directories (meds-dev-task's .logs/) are skipped.
+external_labels_dir: ???
+
+#: Which splits to cover; null means every split present in the task.
+splits: null
+
+#: §2.4.3: "The maximum effective context window was therefore 16,384 clinical events per patient."
+#: meds-torch-data pads each sample to the longest sequence *in its batch*, not to this bound, so raising
+#: it costs nothing on datasets with short timelines and is what admits long ones.
+max_seq_len: 16384
+
+#: Supplementary Table S4: "Max clinical events per batch 16,384", "Min patients per batch 1". The paper
+#: fills a fixed *event* budget per batch by packing patients; meds-torch-data pads instead of packing, so
+#: there is no way to express that here. `batch_size: 1` is the faithful reading — one patient, up to the
+#: full 16,384-event context. On a dataset whose timelines are far shorter, raise it: the real constraint
+#: is `batch_size * (longest timeline in the batch)`, and a batch of 32 thousand-event patients is much
+#: closer to the paper's budget than 32 sixteen-thousand-event ones.
+batch_size: 1
+num_workers: 0
+
+do_overwrite: false
+
+hydra:
+  run: {dir: "${log_dir}/infer"}
+  job: {chdir: false}

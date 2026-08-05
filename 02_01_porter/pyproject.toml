@@ -1,0 +1,91 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "porter"
+version = "0.1.0"
+description = "PORTER: language-grounded event representations for portable structured EHR foundation models — a frozen text-encoder input pathway feeding an autoregressive temporal Transformer, probed with L2 logistic regression."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Florent Pollet", email = "flo1.raymond@gmail.com" }]
+dependencies = [
+  # PORTER's frozen text encoder (paper §2.4.1: BioLORD-2023). Imported lazily inside
+  # `porter.model.build_text_table`, and reached only by `pretrain`: the encoded table is a persistent
+  # buffer, so it rides in the checkpoint and `infer`/`predict` reload without touching HuggingFace.
+  "sentence-transformers>=3.0,<6",
+  # Core MEDS ecosystem (the vendored `meds_model_base` package builds on these).
+  "meds~=0.4",
+  "meds-torch-data[lightning]~=0.9.0",
+  "MEDS-transforms>=0.6.7",
+  "meds-evaluation~=0.0.6",
+  "hydra-core>=1.3,<2",
+  "lightning>=2.5,<3",
+  "torch>=2.4",
+  "torchmetrics>=1.0",
+  "polars>=1.30,<2",
+  "pyarrow",
+  "numpy",
+]
+
+[project.optional-dependencies]
+# The template never parses ACES: tasks arrive as materialized labels (see `meds-dev-task`). A model
+# that chooses to interpret a task definition itself can install this.
+aces = ["es-aces>=0.7.3"]
+
+
+[project.scripts]
+"meds-model" = "porter.__main__:cli"
+# Packaging helper, not one of the five commands: copies `model.yaml` into a MEDS-DEV checkout.
+"meds-model-add-to-meds-dev" = "meds_model_base.meds_dev:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8",
+  "pytest-cov",
+  "meds-testing-helpers~=0.3.1",
+  "hypothesis",
+  "ruff",
+  "pre-commit<4",
+  "yaml_to_disk",
+  "pretty-print-directory",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/porter", "src/meds_model_base"]
+
+# Ship the packaged Hydra configs inside the wheel.
+[tool.hatch.build.targets.wheel.force-include]
+"src/porter/configs" = "porter/configs"
+"src/porter/pipelines" = "porter/pipelines"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4", "SIM", "RUF", "N"]
+ignore = ["RUF022"]  # `__all__` is grouped by concern with comments, not alphabetized
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # re-exports
+
+[tool.ruff.lint.pep8-naming]
+# `F` (torch.nn.functional), `L` (lightning.pytorch), and MEDS-cased names are ecosystem conventions.
+extend-ignore-names = ["F", "L", "*MEDS*"]
+
+[tool.ruff.lint.isort]
+# The vendored contract sorts as a third-party import (before your own first-party package), so import
+# ordering is stable regardless of the model slug.
+known-third-party = ["meds_model_base"]
+
+[tool.pytest.ini_options]
+addopts = ["--color=yes", "--doctest-modules", "--doctest-glob=*.md"]
+# ELLIPSIS lets docstring examples elide long error messages; NORMALIZE_WHITESPACE lets them wrap.
+doctest_optionflags = ["ELLIPSIS", "NORMALIZE_WHITESPACE"]
+testpaths = ["src", "tests"]
+markers = [
+  "slow: designed-signal learnability test (deselect with '-m \"not slow\"')",
+  "meds_dev: end-to-end through MEDS-DEV (run with '-m meds_dev'; clones MEDS-DEV, so it skips otherwise)",
+]
