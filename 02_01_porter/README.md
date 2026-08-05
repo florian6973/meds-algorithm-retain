@@ -68,6 +68,17 @@ bash slurm/00_prefetch_encoder.sh   # once, on the LOGIN node — compute nodes 
 bash slurm/submit.sh                # preprocess -> pretrain -> infer+probe+predict, chained on afterok
 ```
 
+If `sbatch` says **"Invalid account or account/partition combination specified"**, the account either
+does not exist or is not permitted on `GPU_PARTITION`. Diagnose without queueing anything:
+
+```bash
+sacctmgr show assoc user=$USER format=account,partition,qos   # what you are actually allowed
+DRY_RUN=1 bash slurm/submit.sh                                # sbatch --test-only, validates and exits
+```
+
+Set `SLURM_ACCOUNT` to an account that listing shows, or leave it **empty** — `submit.sh` then omits
+`--account` entirely and lets SLURM use your default association, which is right on most clusters.
+
 `01_preflight.sh` trains nothing and takes seconds. It exists for one question above all: **does
 `metadata/codes.parquet` have a `description` column?** PORTER's entire input pathway is that text. An
 extract without it still preprocesses, still trains, still produces an AUROC — and is not PORTER. The
@@ -75,7 +86,20 @@ script prints the strings the frozen encoder will actually receive, so you can s
 before you commit to it, and it also sizes `batch_size` against the 16,384-event budget from the real
 timeline lengths.
 
-`slurm/env.sh` is the only file to edit; every job sources it. The three things that most often go wrong
+`slurm/env.sh` is the only file to edit; every job sources it. **Edit the file rather than setting
+variables in your shell** — or if you do set them, `export` them:
+
+```bash
+MEDS_ROOT=/other/dataset
+bash slurm/submit.sh                      # IGNORED: a child process sees only exported variables
+
+export MEDS_ROOT=/other/dataset           # works
+MEDS_ROOT=/other/dataset bash slurm/...   # also works (inline prefix exports for that command)
+```
+
+`submit.sh` prints the resolved dataset, labels, output, account and partitions before it queues
+anything, and warns about paths that do not exist, so a value that failed to take is visible in the first
+four lines rather than in tomorrow's log. The three things that most often go wrong
 on a cluster are handled there and worth knowing about:
 
 - **The text encoder download.** `pretrain` fetches BioLORD-2023 (~0.4 GB) from HuggingFace. Nothing

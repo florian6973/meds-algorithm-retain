@@ -1,5 +1,10 @@
 # Shared settings for the SLURM jobs. Edit this, then `bash slurm/submit.sh`.
 #
+# Absolute path to this checkout, resolved from this file rather than from the caller's directory.
+# `SLURM_SUBMIT_DIR` is wherever `sbatch` happened to be run, which is not necessarily the repo, and
+# a compute node that starts in the wrong place fails minutes in with an import error.
+export PORTER_REPO="${PORTER_REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+#
 # Sourced by every script in this directory (and by `submit.sh` before it calls sbatch), so anything you
 # export here reaches the jobs. Every value can also be overridden from the environment:
 #   MEDS_ROOT=/other/dataset bash slurm/submit.sh
@@ -9,11 +14,13 @@
 # ----------------------------------------------------------------------------------------------------
 # Left empty on purpose: an account or partition that does not exist on your cluster is a confusing
 # failure, and a wrong one is worse. Fill in what `sacctmgr show assoc user=$USER` gives you.
-export SLURM_ACCOUNT="${SLURM_ACCOUNT:-ffp2106}"
-# Still unset: you gave an account but not a partition. Find it with
-#   sinfo -o "%P %G %l" | grep -i gpu
-# `submit.sh` refuses rather than submitting to the cluster default, which may have no GPU at all.
-export GPU_PARTITION="${GPU_PARTITION:-}"
+# EMPTY BY DEFAULT, and that is usually correct: most clusters resolve your default association from
+# your user, and passing an account you are not associated with on this partition is exactly what
+# produces "Invalid account or account/partition combination specified". Leave it empty unless SLURM
+# tells you an account is required. If it is, take one from
+#   sacctmgr show assoc user=$USER format=account,partition,qos
+export SLURM_ACCOUNT="${SLURM_ACCOUNT-}"
+export GPU_PARTITION="${GPU_PARTITION:-gpu}"
 export CPU_PARTITION="${CPU_PARTITION:-$GPU_PARTITION}"
 
 # One GPU is what the paper used ("a single NVIDIA H100 or L40S GPU"). 115.6 M parameters at 16,384
@@ -91,4 +98,8 @@ export CUBLAS_WORKSPACE_CONFIG="${CUBLAS_WORKSPACE_CONFIG:-:4096:8}"
 #   module load python/3.12 cuda/13.0 && source /path/to/venv/bin/activate && export PORTER_RUN=""
 export PORTER_RUN="${PORTER_RUN-uv run}"
 
-mkdir -p "$LOG_DIR" "$HF_HOME" "$TORCHINDUCTOR_CACHE_DIR" "$TRITON_CACHE_DIR"
+mkdir -p "$LOG_DIR" "$HF_HOME" "$TORCHINDUCTOR_CACHE_DIR" "$TRITON_CACHE_DIR" 2>/dev/null || {
+  echo "slurm/env.sh: cannot create directories under OUTPUT_DIR=$OUTPUT_DIR" >&2
+  echo "  Point OUTPUT_DIR at somewhere writable (scratch, not home)." >&2
+  return 1 2>/dev/null || exit 1
+}

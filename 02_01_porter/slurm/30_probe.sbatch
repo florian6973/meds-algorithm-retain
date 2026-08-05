@@ -2,8 +2,6 @@
 #SBATCH --job-name=porter-probe
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --output=%x-%j.out
-#SBATCH --error=%x-%j.err
 # The downstream half: materialize frozen representations once, fit the L2 logistic probe on them, score.
 #
 # `infer` is the expensive step (one forward pass of the backbone per prediction timepoint) and wants the
@@ -13,8 +11,9 @@
 # Note `predict` is given no model overrides: it rebuilds the model from the checkpoint's own
 # hyperparameters, so passing them would be silently ignored rather than honoured.
 set -euo pipefail
-cd "${SLURM_SUBMIT_DIR:-$(dirname "${BASH_SOURCE[0]}")/..}"
-source slurm/env.sh
+# Absolute, so it does not matter where sbatch was invoked from.
+cd "${PORTER_REPO:?PORTER_REPO is unset — submit through slurm/submit.sh, which exports it}"
+source "$PORTER_REPO/slurm/env.sh"
 
 $PORTER_RUN meds-model infer \
   "input_data_dir=$DATA_DIR" \
