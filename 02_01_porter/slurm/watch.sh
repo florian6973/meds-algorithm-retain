@@ -20,10 +20,23 @@ echo
 echo "── artifacts (this is the real progress) ───────────────────────────────────"
 report() {  # report <label> <path> [file that means "finished"]
   local label=$1 path=$2 marker=${3:-manifest.yaml}
+  local dir base staging size
+  dir=$(dirname "$path"); base=$(basename "$path")
+
   if [[ -f "$path/$marker" ]]; then
-    printf '  %-22s done      %s\n' "$label" "$path"
-  elif [[ -d "$path" || -d "$path.work" ]]; then
-    printf '  %-22s in progress\n' "$label"
+    printf '  %-22s done       %6s  %s\n' "$label" "$(du -sh "$path" 2>/dev/null | cut -f1)" "$path"
+    return
+  fi
+
+  # A partial artifact is NEVER visible at its final path: `write_artifact` stages into a dot-prefixed
+  # sibling (`mkdtemp(prefix=".<name>.", dir=<parent>)`) and renames it into place only once the
+  # manifest is written. So "pending" at the final path can mean "tens of GB already written" — look
+  # for the staging directory, or you will think a working job is doing nothing. Training additionally
+  # scratches in `<output_dir>.work`.
+  staging=$(ls -d "$dir/.$base."* "$path.work" 2>/dev/null | head -1 || true)
+  if [[ -n "$staging" ]]; then
+    size=$(du -sh "$staging" 2>/dev/null | cut -f1)
+    printf '  %-22s writing    %6s  %s\n' "$label" "${size:-?}" "${staging##*/}"
   else
     printf '  %-22s pending\n' "$label"
   fi
