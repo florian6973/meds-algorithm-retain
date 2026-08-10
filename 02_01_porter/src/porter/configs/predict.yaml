@@ -31,6 +31,14 @@ output_predictions_dir: ${predictions_dir}
 #: that carries no ground truth at all.
 attach_labels: true
 
+#: null (the default) emits `predicted_boolean_value` as an all-null column: present, so
+#: `meds-evaluation` can fetch it (see meds-evaluation#35), but carrying no invented decision. The
+#: scorer then reports the threshold-free metrics — AUROC, AUPRC, Brier, calibration — and omits
+#: accuracy and F1 rather than computing them against a cutoff this model never chose.
+#:
+#: Set a float to emit a real hard label, e.g. a cutoff picked on the tuning split.
+decision_threshold: null
+
 #: Mutually exclusive prediction sources.
 input_supervised_model_dir: null
 input_pretrained_model_dir: null

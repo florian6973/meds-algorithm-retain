@@ -24,6 +24,11 @@ from meds_model_base.commands import (
     ProbeTrainCommand,
 )
 
+#: Probability above which `predicted_boolean_value` is emitted as a hard label. ``null`` — the default
+#: — emits the column as all-null instead, which is what PORTER wants; see
+#: :class:`ScorablePredictCommand`. Overridable as ``predict.decision_threshold=0.5``.
+DEFAULT_DECISION_THRESHOLD = None
+
 
 def ordered_split_loader(cfg, split: str):
     """Return ``(dataset, dataloader)`` for ``split`` whose iteration order is ``schema_df`` order.
@@ -126,10 +131,65 @@ class OrderStableInferCommand(DefaultInferCommand):
         return pl.concat(frames, how="vertical_relaxed").unique(subset=KEYS, maintain_order=True)
 
 
+class ScorablePredictCommand(ProbePredictCommand):
+    """``predict``, plus an all-null ``predicted_boolean_value`` column so the output can be scored.
+
+    A probe emits a probability, and that is all PORTER needs: §2.7.1 reports AUROC, which is
+    threshold-free. `meds_evaluation.schema.PredictionSchema` agrees, and not merely by convention — both
+    prediction fields are declared ``Optional`` and ``_validate_schema`` exists solely to enforce "at
+    least one of the two must be present".
+
+    `evaluate_binary_classification` nonetheless fetches the hard label unconditionally
+    (`evaluate.py:54`), so a probability-only file passes validation and then crashes the scorer with
+    `ColumnNotFoundError`. Reported upstream as
+    `meds-evaluation#35 <https://github.com/kamilest/meds-evaluation/issues/35>`_.
+
+    **The column is all-null, not thresholded.** `PredictionSchema.align` keeps a *declared* all-null
+    column while dropping an *absent* one, and the scorer already handles the former::
+
+        if predicted_values.is_null().all():
+            predicted_values = None
+
+    So an all-null column reaches exactly the branch the library was written for. Measured, on the same
+    predictions:
+
+    ==========================  =====================================================================
+    ``predicted_boolean_value``  metrics produced
+    ==========================  =====================================================================
+    all-null (default)           ``roc_auc_score``, ``average_precision_score``, ``brier_score``,
+                                 ``calibration_error``
+    thresholded at 0.5           the same four, plus ``binary_accuracy`` and ``f1_score``
+    ==========================  =====================================================================
+
+    ``roc_auc_score`` is bit-identical between the two. The only difference is that thresholding *adds*
+    accuracy and F1 — computed against a cutoff the model never chose. On an imbalanced cohort (the
+    fluid-output task is 14.5% positive) those two numbers are actively misleading, and a reader has no
+    way to tell they came from an arbitrary 0.5. Omitting them is more honest than inventing them.
+
+    Set ``predict.decision_threshold=0.5`` to opt into the hard label when you genuinely want it — for
+    instance with a cutoff chosen on the tuning split.
+    """
+
+    def predict(self, cfg, source, index):
+        import polars as pl
+
+        frame = super().predict(cfg, source, index)
+        if "predicted_boolean_value" in frame.columns:
+            return frame
+
+        threshold = cfg.get("decision_threshold", DEFAULT_DECISION_THRESHOLD)
+        if threshold is None:
+            # Declared but null: kept by `align`, and the scorer turns it into `None` itself.
+            label = pl.lit(None, dtype=pl.Boolean)
+        else:
+            label = pl.col("predicted_boolean_probability") > float(threshold)
+        return frame.with_columns(label.alias("predicted_boolean_value"))
+
+
 COMMANDS = {
     CommandName.preprocess_data: DefaultPreprocessDataCommand,
     CommandName.pretrain: DefaultPretrainCommand,
     CommandName.infer: OrderStableInferCommand,
     CommandName.supervised_train: ProbeTrainCommand,
-    CommandName.predict: ProbePredictCommand,
+    CommandName.predict: ScorablePredictCommand,
 }
