@@ -1,0 +1,547 @@
+[
+  {
+    "family": "Supervised",
+    "number": 1,
+    "model": "TECO",
+    "year": "2025",
+    "strategies": [
+      "1. Simple supervised"
+    ],
+    "paper": "https://academic.oup.com/jamiaopen/article/8/2/ooaf026/8110091",
+    "markdown_file": "01_supervised_models/01_teco.md"
+  },
+  {
+    "family": "Supervised",
+    "number": 2,
+    "model": "STraTS-mTAND",
+    "year": "2025",
+    "strategies": [
+      "1. Simple supervised"
+    ],
+    "paper": "https://dl.acm.org/doi/10.1145/3743689",
+    "markdown_file": "01_supervised_models/02_strats-mtand.md"
+  },
+  {
+    "family": "Supervised",
+    "number": 3,
+    "model": "TRANS",
+    "year": "2024",
+    "strategies": [
+      "1. Simple supervised"
+    ],
+    "paper": "https://arxiv.org/abs/2405.03943",
+    "markdown_file": "01_supervised_models/03_trans.md"
+  },
+  {
+    "family": "Supervised",
+    "number": 4,
+    "model": "PRISM",
+    "year": "2024",
+    "strategies": [
+      "1. Simple supervised"
+    ],
+    "paper": "https://arxiv.org/abs/2309.04160",
+    "markdown_file": "01_supervised_models/04_prism.md"
+  },
+  {
+    "family": "Supervised",
+    "number": 5,
+    "model": "GenHPF",
+    "year": "2024",
+    "strategies": [
+      "1. Simple supervised"
+    ],
+    "paper": "https://arxiv.org/abs/2207.09858",
+    "markdown_file": "01_supervised_models/05_genhpf.md"
+  },
+  {
+    "family": "Supervised",
+    "number": 6,
+    "model": "KerPrint",
+    "year": "2023",
+    "strategies": [
+      "1. Simple supervised"
+    ],
+    "paper": "https://ojs.aaai.org/index.php/AAAI/article/view/25667/25439",
+    "markdown_file": "01_supervised_models/06_kerprint.md"
+  },
+  {
+    "family": "Supervised",
+    "number": 7,
+    "model": "Chet",
+    "year": "2022",
+    "strategies": [
+      "1. Simple supervised"
+    ],
+    "paper": "https://arxiv.org/abs/2112.05195",
+    "markdown_file": "01_supervised_models/07_chet.md"
+  },
+  {
+    "family": "Supervised",
+    "number": 8,
+    "model": "UniHPF",
+    "year": "2022",
+    "strategies": [
+      "1. Simple supervised"
+    ],
+    "paper": "https://arxiv.org/abs/2211.08082",
+    "markdown_file": "01_supervised_models/08_unihpf.md"
+  },
+  {
+    "family": "Supervised",
+    "number": 9,
+    "model": "SETOR",
+    "year": "2021",
+    "strategies": [
+      "1. Simple supervised"
+    ],
+    "paper": "https://arxiv.org/abs/2109.03069",
+    "markdown_file": "01_supervised_models/09_setor.md"
+  },
+  {
+    "family": "Supervised",
+    "number": 10,
+    "model": "GRASP",
+    "year": "2021",
+    "strategies": [
+      "1. Simple supervised"
+    ],
+    "paper": "https://ojs.aaai.org/index.php/AAAI/article/view/16152",
+    "markdown_file": "01_supervised_models/10_grasp.md"
+  },
+  {
+    "family": "Supervised",
+    "number": 11,
+    "model": "GCT",
+    "year": "2020",
+    "strategies": [
+      "1. Simple supervised"
+    ],
+    "paper": "https://arxiv.org/abs/1906.04716",
+    "markdown_file": "01_supervised_models/11_gct.md"
+  },
+  {
+    "family": "Supervised",
+    "number": 12,
+    "model": "StageNet",
+    "year": "2020",
+    "strategies": [
+      "1. Simple supervised"
+    ],
+    "paper": "https://arxiv.org/abs/2001.10054",
+    "markdown_file": "01_supervised_models/12_stagenet.md"
+  },
+  {
+    "family": "Supervised",
+    "number": 13,
+    "model": "HiTANet",
+    "year": "2020",
+    "strategies": [
+      "1. Simple supervised"
+    ],
+    "paper": "https://dl.acm.org/doi/10.1145/3394486.3403107",
+    "markdown_file": "01_supervised_models/13_hitanet.md"
+  },
+  {
+    "family": "Supervised",
+    "number": 14,
+    "model": "AdaCare",
+    "year": "2020",
+    "strategies": [
+      "1. Simple supervised"
+    ],
+    "paper": "https://arxiv.org/abs/1911.12205",
+    "markdown_file": "01_supervised_models/14_adacare.md"
+  },
+  {
+    "family": "Supervised",
+    "number": 15,
+    "model": "ConCare",
+    "year": "2020",
+    "strategies": [
+      "1. Simple supervised"
+    ],
+    "paper": "https://arxiv.org/abs/1911.12216",
+    "markdown_file": "01_supervised_models/15_concare.md"
+  },
+  {
+    "family": "Supervised",
+    "number": 16,
+    "model": "SAnD",
+    "year": "2018",
+    "strategies": [
+      "1. Simple supervised"
+    ],
+    "paper": "https://arxiv.org/abs/1711.03905",
+    "markdown_file": "01_supervised_models/16_sand.md"
+  },
+  {
+    "family": "Supervised",
+    "number": 17,
+    "model": "Dipole",
+    "year": "2017",
+    "strategies": [
+      "1. Simple supervised"
+    ],
+    "paper": "https://arxiv.org/abs/1706.05764",
+    "markdown_file": "01_supervised_models/17_dipole.md"
+  },
+  {
+    "family": "Supervised",
+    "number": 18,
+    "model": "GRAM",
+    "year": "2017",
+    "strategies": [
+      "1. Simple supervised"
+    ],
+    "paper": "https://arxiv.org/abs/1611.07012",
+    "markdown_file": "01_supervised_models/18_gram.md"
+  },
+  {
+    "family": "Supervised",
+    "number": 19,
+    "model": "RETAIN",
+    "year": "2016",
+    "strategies": [
+      "1. Simple supervised"
+    ],
+    "paper": "https://proceedings.neurips.cc/paper/2016/hash/231141b34c82aa95e48810a9d1b33a79-Abstract.html",
+    "markdown_file": "01_supervised_models/19_retain.md"
+  },
+  {
+    "family": "Supervised",
+    "number": 20,
+    "model": "Doctor AI",
+    "year": "2016",
+    "strategies": [
+      "1. Simple supervised"
+    ],
+    "paper": "https://proceedings.mlr.press/v56/Choi16.html",
+    "markdown_file": "01_supervised_models/20_doctor-ai.md"
+  },
+  {
+    "family": "Pretrained",
+    "number": 1,
+    "model": "PORTER",
+    "year": "2026",
+    "strategies": [
+      "3. Pretrained probe"
+    ],
+    "paper": "https://arxiv.org/abs/2606.24102",
+    "markdown_file": "02_pretrained_models/01_porter.md"
+  },
+  {
+    "family": "Pretrained",
+    "number": 2,
+    "model": "AID-MAE",
+    "year": "2026",
+    "strategies": [
+      "2. Pretrain + fine-tune",
+      "3. Pretrained probe"
+    ],
+    "paper": "https://arxiv.org/abs/2602.15159",
+    "markdown_file": "02_pretrained_models/02_aid-mae.md"
+  },
+  {
+    "family": "Pretrained",
+    "number": 3,
+    "model": "HealthFormer",
+    "year": "2026",
+    "strategies": [
+      "2. Pretrain + fine-tune"
+    ],
+    "paper": "https://www.medrxiv.org/content/10.64898/2026.03.25.26349262v2.full-text",
+    "markdown_file": "02_pretrained_models/03_healthformer.md"
+  },
+  {
+    "family": "Pretrained",
+    "number": 4,
+    "model": "PULSE-ICU",
+    "year": "2025",
+    "strategies": [
+      "2. Pretrain + fine-tune"
+    ],
+    "paper": "https://arxiv.org/abs/2511.22199",
+    "markdown_file": "02_pretrained_models/04_pulse-icu.md"
+  },
+  {
+    "family": "Pretrained",
+    "number": 5,
+    "model": "BAT foundation-model configuration",
+    "year": "2025",
+    "strategies": [
+      "2. Pretrain + fine-tune",
+      "3. Pretrained probe"
+    ],
+    "paper": "https://arxiv.org/abs/2509.19885",
+    "markdown_file": "02_pretrained_models/05_bat-foundation-model-configuration.md"
+  },
+  {
+    "family": "Pretrained",
+    "number": 6,
+    "model": "TOO-BERT",
+    "year": "2025",
+    "strategies": [
+      "2. Pretrain + fine-tune"
+    ],
+    "paper": "https://medinform.jmir.org/2025/1/e68138",
+    "markdown_file": "02_pretrained_models/06_too-bert.md"
+  },
+  {
+    "family": "Pretrained",
+    "number": 7,
+    "model": "CORE-BEHRT",
+    "year": "2024",
+    "strategies": [
+      "2. Pretrain + fine-tune"
+    ],
+    "paper": "https://raw.githubusercontent.com/mlresearch/v252/main/assets/odgaard24a/odgaard24a.pdf",
+    "markdown_file": "02_pretrained_models/07_core-behrt.md"
+  },
+  {
+    "family": "Pretrained",
+    "number": 8,
+    "model": "EBCL",
+    "year": "2024",
+    "strategies": [
+      "2. Pretrain + fine-tune"
+    ],
+    "paper": "https://proceedings.mlr.press/v252/oufattole24a.html",
+    "markdown_file": "02_pretrained_models/08_ebcl.md"
+  },
+  {
+    "family": "Pretrained",
+    "number": 9,
+    "model": "MOTOR",
+    "year": "2024",
+    "strategies": [
+      "2. Pretrain + fine-tune"
+    ],
+    "paper": "https://proceedings.iclr.cc/paper_files/paper/2024/hash/b36554b97da741b1c48c9de05c73993e-Abstract-Conference.html",
+    "markdown_file": "02_pretrained_models/09_motor.md"
+  },
+  {
+    "family": "Pretrained",
+    "number": 10,
+    "model": "TransformEHR",
+    "year": "2023",
+    "strategies": [
+      "2. Pretrain + fine-tune"
+    ],
+    "paper": "https://www.nature.com/articles/s41467-023-43715-z",
+    "markdown_file": "02_pretrained_models/10_transformehr.md"
+  },
+  {
+    "family": "Pretrained",
+    "number": 11,
+    "model": "DuETT",
+    "year": "2023",
+    "strategies": [
+      "2. Pretrain + fine-tune",
+      "3. Pretrained probe"
+    ],
+    "paper": "https://proceedings.mlr.press/v219/labach23a.html",
+    "markdown_file": "02_pretrained_models/11_duett.md"
+  },
+  {
+    "family": "Pretrained",
+    "number": 12,
+    "model": "TransEHR",
+    "year": "2023",
+    "strategies": [
+      "2. Pretrain + fine-tune"
+    ],
+    "paper": "https://proceedings.mlr.press/v225/xu23a.html",
+    "markdown_file": "02_pretrained_models/12_transehr.md"
+  },
+  {
+    "family": "Pretrained",
+    "number": 13,
+    "model": "Hi-BEHRT",
+    "year": "2023",
+    "strategies": [
+      "2. Pretrain + fine-tune"
+    ],
+    "paper": "https://arxiv.org/abs/2106.11360",
+    "markdown_file": "02_pretrained_models/13_hi-behrt.md"
+  },
+  {
+    "family": "Pretrained",
+    "number": 14,
+    "model": "GenHPF with self-supervised pretraining",
+    "year": "2022/2023",
+    "strategies": [
+      "2. Pretrain + fine-tune"
+    ],
+    "paper": "https://arxiv.org/abs/2207.09858",
+    "markdown_file": "02_pretrained_models/14_genhpf-with-self-supervised-pretraining.md"
+  },
+  {
+    "family": "Pretrained",
+    "number": 15,
+    "model": "STraTS",
+    "year": "2022",
+    "strategies": [
+      "2. Pretrain + fine-tune"
+    ],
+    "paper": "https://arxiv.org/abs/2107.14293",
+    "markdown_file": "02_pretrained_models/15_strats.md"
+  },
+  {
+    "family": "Pretrained",
+    "number": 16,
+    "model": "CEHR-BERT",
+    "year": "2021",
+    "strategies": [
+      "2. Pretrain + fine-tune"
+    ],
+    "paper": "https://proceedings.mlr.press/v158/pang21a.html",
+    "markdown_file": "02_pretrained_models/16_cehr-bert.md"
+  },
+  {
+    "family": "Pretrained",
+    "number": 17,
+    "model": "CLMBR",
+    "year": "2021",
+    "strategies": [
+      "3. Pretrained probe"
+    ],
+    "paper": "https://arxiv.org/abs/2001.05295",
+    "markdown_file": "02_pretrained_models/17_clmbr.md"
+  },
+  {
+    "family": "Pretrained",
+    "number": 18,
+    "model": "Med-BERT",
+    "year": "2021",
+    "strategies": [
+      "2. Pretrain + fine-tune"
+    ],
+    "paper": "https://www.nature.com/articles/s41746-021-00455-y",
+    "markdown_file": "02_pretrained_models/18_med-bert.md"
+  },
+  {
+    "family": "Pretrained",
+    "number": 19,
+    "model": "BEHRT",
+    "year": "2020",
+    "strategies": [
+      "2. Pretrain + fine-tune"
+    ],
+    "paper": "https://www.nature.com/articles/s41598-020-62922-y",
+    "markdown_file": "02_pretrained_models/19_behrt.md"
+  },
+  {
+    "family": "Pretrained",
+    "number": 20,
+    "model": "G-BERT",
+    "year": "2019",
+    "strategies": [
+      "2. Pretrain + fine-tune"
+    ],
+    "paper": "https://arxiv.org/abs/1906.00346",
+    "markdown_file": "02_pretrained_models/20_g-bert.md"
+  },
+  {
+    "family": "Recent addition",
+    "number": 1,
+    "model": "SurvivEHR",
+    "year": "2026",
+    "strategies": [
+      "2. Pretrain + fine-tune"
+    ],
+    "paper": "https://www.nature.com/articles/s41746-026-02709-z",
+    "markdown_file": "03_recent_additions/01_survivehr.md"
+  },
+  {
+    "family": "Recent addition",
+    "number": 2,
+    "model": "EveryQuery",
+    "year": "2026",
+    "strategies": [
+      "4. Direct zero-shot"
+    ],
+    "paper": "https://arxiv.org/abs/2603.07900",
+    "markdown_file": "03_recent_additions/02_everyquery.md"
+  },
+  {
+    "family": "Recent addition",
+    "number": 3,
+    "model": "CEHR-XGPT",
+    "year": "2025",
+    "strategies": [
+      "2. Pretrain + fine-tune",
+      "3. Pretrained probe",
+      "5. Materialized zero-shot"
+    ],
+    "paper": "https://arxiv.org/abs/2509.03643",
+    "markdown_file": "03_recent_additions/03_cehr-xgpt.md"
+  },
+  {
+    "family": "Recent addition",
+    "number": 4,
+    "model": "CoMET",
+    "year": "2025",
+    "strategies": [
+      "5. Materialized zero-shot"
+    ],
+    "paper": "https://arxiv.org/abs/2508.12104",
+    "markdown_file": "03_recent_additions/04_comet.md"
+  },
+  {
+    "family": "Recent addition",
+    "number": 5,
+    "model": "Delphi-2M",
+    "year": "2025",
+    "strategies": [
+      "4. Direct zero-shot",
+      "5. Materialized zero-shot"
+    ],
+    "paper": "https://www.nature.com/articles/s41586-025-09529-3",
+    "markdown_file": "03_recent_additions/05_delphi-2m.md"
+  },
+  {
+    "family": "Recent addition",
+    "number": 6,
+    "model": "ETHOS / ARES",
+    "year": "2024/2025",
+    "strategies": [
+      "5. Materialized zero-shot"
+    ],
+    "paper": "https://www.nature.com/articles/s41746-024-01235-0",
+    "markdown_file": "03_recent_additions/06_ethos-ares.md"
+  },
+  {
+    "family": "Recent addition",
+    "number": 7,
+    "model": "MEDS-EIC-AR",
+    "year": "2025–2026",
+    "strategies": [
+      "5. Materialized zero-shot"
+    ],
+    "paper": "https://github.com/mmcdermott/MEDS_EIC_AR",
+    "markdown_file": "03_recent_additions/07_meds-eic-ar.md"
+  },
+  {
+    "family": "Recent addition",
+    "number": 8,
+    "model": "ORA",
+    "year": "2026",
+    "strategies": [
+      "3. Pretrained probe"
+    ],
+    "paper": "https://arxiv.org/abs/2602.00541",
+    "markdown_file": "03_recent_additions/08_ora.md"
+  },
+  {
+    "family": "Recent addition",
+    "number": 9,
+    "model": "SurvPFN",
+    "year": "2026",
+    "strategies": [
+      "6. PFN-style"
+    ],
+    "paper": "https://arxiv.org/abs/2606.04564",
+    "markdown_file": "03_recent_additions/09_survpfn.md"
+  }
+]

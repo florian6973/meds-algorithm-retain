@@ -1,9 +1,0 @@
-# TECO's optimizer: "SGD optimizer with momentum (0.9)", learning rate 0.01 (JAMIA Open 8(2) ooaf026,
-# Methods). The paper states no weight decay, so it stays at SGD's own default of 0 rather than inheriting
-# the template's generic `adamw.yaml` value of 0.01 — that would be a regularizer the published model
-# never had. The learning-rate *schedule* that goes with this (halved every 50 epochs) lives in
-# `model/default.yaml`, because the contract passes the scheduler factory to the module.
-_target_: torch.optim.SGD
-_partial_: true
-lr: 0.01
-momentum: 0.9
