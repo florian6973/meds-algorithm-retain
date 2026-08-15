@@ -112,50 +112,7 @@ git -C "$MEDS_TEMPLATE_ROOT" rev-parse HEAD
 
 Use `auto` permission mode with sandboxing enabled. Auto mode applies Claude Code's safety classifier; it
 does not remove the sandbox or explicit deny rules. GitHub operations need network access outside the
-sandbox. Add a local, uncommitted `.claude/settings.local.json` in `meds-models`:
-
-```json
-{
-  "sandbox": {
-    "enabled": true,
-    "failIfUnavailable": true,
-    "excludedCommands": [
-      "git fetch *",
-      "git pull *",
-      "git push *",
-      "gh issue *",
-      "gh pr *"
-    ]
-  },
-  "permissions": {
-    "defaultMode": "auto",
-    "allow": [
-      "Bash(git fetch *)",
-      "Bash(git push origin model/*)",
-      "Bash(gh issue view *)",
-      "Bash(gh issue comment *)",
-      "Bash(gh pr create *)",
-      "Bash(uv run *)"
-    ],
-    "deny": [
-      "Bash(git push origin master)",
-      "Bash(git push --force *)",
-      "Bash(gh pr merge *)",
-      "Bash(gh issue close *)",
-      "Bash(sbatch *)"
-    ]
-  },
-  "crossSessionInbound": "accept"
-}
-```
-
-Review these permissions on the DGX before use. Branch protection on `master` remains required; prompt
-rules are helpful guardrails, not a replacement for repository controls. Do not use
-`--dangerously-skip-permissions`.
-
-`crossSessionInbound: "accept"` is intentionally explicit. Auto-mode sessions will often deliver messages
-under the default rules, but the explicit setting makes master-to-worker wakeups predictable. A
-cross-session message still cannot approve a permission request or a human review gate.
+sandbox.
 
 ## 4. Master agent: initialize the pilot
 
