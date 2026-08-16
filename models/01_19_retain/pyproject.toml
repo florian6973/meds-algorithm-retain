@@ -7,7 +7,17 @@ name = "retain"
 version = "0.1.0"
 description = "RETAIN implemented against the minimal MEDS model contract."
 requires-python = ">=3.11"
-dependencies = ["pyyaml>=6"]
+# torch carries the model itself; the official implementation is Theano 0.8 on Python 2.7, which is not
+# installable today, and `nn.GRU` is gate-for-gate identical to its `gru_layer`. polars/pyarrow read MEDS
+# and write MEDS predictions, numpy carries the ragged visit sequences. These four are additions to the
+# rendered scaffold and are recorded in IMPLEMENTATION_REPORT.md.
+dependencies = [
+  "pyyaml>=6",
+  "numpy>=1.26",
+  "polars>=1",
+  "pyarrow>=15",
+  "torch>=2.2",
+]
 
 [project.optional-dependencies]
 test = ["pytest>=8", "polars>=1", "pyarrow>=15", "meds-evaluation"]

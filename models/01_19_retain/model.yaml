@@ -1,4 +1,11 @@
 ## MEDS-DEV descriptor for RETAIN. This retains the established command-slot interface.
+##
+## Predicates. This port is rendered `uses_predicates=false` and is predicate-free by construction:
+## RETAIN's published input is a sequence of medical codes, which the MEDS `code` column already is, so
+## there is nothing for a dataset predicate to resolve. No command slot below references
+## `{predicates_path}`, this repository ships no `predicates.yaml`, and the commands reject
+## `external_predicates_file` rather than accepting an input they would not use. Setting
+## `predicates_path=` on a MEDS-DEV run of this model is harmless and simply goes unused.
 metadata:
   description: "RETAIN implemented against the minimal MEDS model contract."
   contacts:
@@ -9,8 +16,7 @@ commands:
   supervised:
     train: |-
       meds-model preprocess_data external_meds_dir={dataset_dir} output_data_dir={output_dir}/data do_overwrite=true
-      meds-model supervised_train input_data_dir={output_dir}/data external_labels_dir={labels_dir} output_supervised_model_dir={output_dir}/model
+      meds-model supervised_train input_data_dir={output_dir}/data external_labels_dir={labels_dir} output_supervised_model_dir={output_dir}/model do_overwrite=true
 
     predict: |-
-      meds-model predict input_supervised_model_dir={model_initialization_dir}/model external_labels_dir={labels_dir} splits=[{split}] output_predictions_dir={output_dir} do_overwrite=true
-
+      meds-model predict input_supervised_model_dir={model_initialization_dir}/model external_labels_dir={labels_dir} splits=[{split}] output_predictions_dir={output_dir}/predictions do_overwrite=true

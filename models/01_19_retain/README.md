@@ -26,11 +26,15 @@ must not assume batches, Lightning, PyTorch, Parquet intermediate data, or itera
 
 - `external_meds_dir` is the standard MEDS dataset boundary.
 - `external_labels_dir` supplies task prediction times and training labels where the DAG needs them.
-- `external_predicates_file` supplies dataset-specific predicates when useful. For MIMIC-IV, reuse the
-  predicates from MEDS-DEV. This repository decides whether and how to interpret them.
+- `external_predicates_file` is **not used**. This port is rendered `uses_predicates=false` and is
+  predicate-free by construction: RETAIN's published input is a sequence of medical codes, which the MEDS
+  `code` column already is, so there is nothing for a dataset predicate to resolve. Every command rejects
+  the argument rather than accepting an input it would ignore, `model.yaml` declares no
+  `{predicates_path}` slot, and this repository ships no `predicates.yaml`.
 
-A command that consumes predicates records their absolute path and SHA-256 digest in its manifest.
-Predicates do not imply a standard feature representation.
+A command that consumes predicates records their absolute path and SHA-256 digest in its manifest. No
+command here consumes one, so no such digest is recorded — recording provenance for an input that did not
+influence the run would be worse than recording nothing.
 
 ## Implementing the model
 
@@ -58,9 +62,10 @@ uv run pytest -m real_data -rs
 - The default suite runs the local end-to-end adapter and contract tests.
 - `meds_dev` registers `model.yaml`, installs this repository from `requirements.txt` in an isolated
   environment, and executes MEDS-DEV's real command slots.
-- `real_data` runs the full selected DAG on the MEDS-DEV MIMIC-IV demo, the pinned
-  `mortality/in_icu/first_24h` task, and MEDS-DEV's
-  MIMIC predicates. Set `MEDS_DEMO_DIR` to reuse an existing demo and `MEDS_DEV_DIR` to reuse a checkout.
+- `real_data` runs the full selected DAG on the MEDS-DEV MIMIC-IV demo and the pinned
+  `mortality/in_icu/first_24h` task. Set `MEDS_DEMO_DIR` to reuse an existing demo and `MEDS_DEV_DIR` to
+  reuse a checkout. MEDS-DEV's MIMIC predicates are located and checked for presence by the test, but this
+  model does not read them.
 
 Until MEDS-DEV PR #325 is merged, automatic provisioning pins its tested predicates-passthrough commit.
 Set `MEDS_DEV_REF` to use another revision containing that capability. A checkout supplied through

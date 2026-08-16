@@ -8,7 +8,7 @@ import resource
 import shutil
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -118,8 +118,18 @@ def measured_artifact(
     semantics_digest: str | None = None,
     external_predicates_file: Path | str | None = None,
     overwrite: bool = False,
+    gpu_metrics: Callable[[], dict[str, Any] | None] | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> Iterator[Path]:
-    """Stage an artifact, measure the command, write its manifest last, and publish atomically."""
+    """Stage an artifact, measure the command, write its manifest last, and publish atomically.
+
+    `gpu_metrics` is an optional caller-supplied probe returning the `resources.gpu` block, so section 6's
+    GPU measurements can be real without the contract depending on any accelerator library. When it is
+    absent, or returns None on a host without one, the all-null block is written unchanged.
+
+    `extra` adds implementation-owned top-level entries, such as section 5's optional diagnostic coverage
+    counts. It refuses to overwrite a required manifest field.
+    """
     destination = Path(destination)
     staging = destination.with_name(f".{destination.name}.staging-{os.getpid()}")
     if staging.exists():
@@ -159,7 +169,8 @@ def measured_artifact(
                     "source": sampler.source,
                     "includes_descendants": sampler.source == "linux_proc_smaps_rollup",
                 },
-                "gpu": {
+                "gpu": (gpu_metrics() if gpu_metrics is not None else None)
+                or {
                     "peak_allocated_bytes": None,
                     "peak_reserved_bytes": None,
                     "source": None,
@@ -169,6 +180,10 @@ def measured_artifact(
                 },
             },
         }
+        for key, value in (extra or {}).items():
+            if key in manifest:
+                raise ValueError(f"extra key {key!r} would overwrite a required manifest field")
+            manifest[key] = value
         (staging / "manifest.yaml").write_text(yaml.safe_dump(manifest, sort_keys=False))
         if destination.exists():
             if not overwrite:
