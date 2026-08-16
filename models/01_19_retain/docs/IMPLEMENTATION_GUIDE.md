@@ -1,0 +1,94 @@
+# Implementation guide
+
+## 1. Inspect the source
+
+Source: `cards/01_supervised_models/19_retain.md, https://proceedings.neurips.cc/paper/2016/hash/231141b34c82aa95e48810a9d1b33a79-Abstract.html, and https://github.com/mp2893/retain`
+
+Read the paper, supplement, repository, configs, data preparation, checkpoints, and evaluation code.
+Build a source-element inventory before implementation; do not infer the model solely from its headline
+architecture.
+
+## 2. Justify the DAG
+
+This repository selected `supervised`. Confirm that its command graph matches the source's actual
+training and prediction lifecycle. Record the justification in `IMPLEMENTATION_REPORT.md`; do not change
+graphs merely to avoid implementing a stage.
+
+## 3. Map inputs
+
+Document how MEDS events and task timepoints enter the model. If dataset predicates are useful, accept
+`external_predicates_file`, declare which names are required, and implement their interpretation in
+model-owned code. Reuse MEDS-DEV's MIMIC predicates for the demo test. Do not create a generic feature
+format in the contract package.
+
+## 4. Implement commands
+
+Implement every class registered in `COMMANDS`. Preserve standard external arguments. Choose and version
+intermediate payload formats, reject incompatible inputs before expensive work, publish atomically, and
+record input digests and measurements. Frameworks, subprocesses, services, batching, and non-batched
+systems are all allowed.
+
+## 5. Complete operational interfaces
+
+Finalize `model.yaml`, `requirements.txt`, `tests/e2e.py`, and `slurm/config.sh`. The local adapter runs the
+real DAG. The MEDS-DEV adapter supplies its isolated invocation. The MIMIC adapter locates/builds the demo
+and the pinned `mortality/in_icu/first_24h` task through MEDS-DEV and reuses its predicates.
+
+## 6. Follow the staged verification workflow
+
+Advance in this order. Each automated stage must pass before the next one starts.
+
+1. **Local gate:** run `uv run pytest -rs`. This exercises the contract and the model-owned basic
+   end-to-end adapter on a small synthetic fixture. Return `E2EResult` from that adapter so the test can
+   compare actual prediction keys with the requested label index and evaluated splits.
+2. **MEDS-DEV gate:** run `uv run pytest -m meds_dev -rs`. This verifies installation and the command
+   strings in `model.yaml` through MEDS-DEV's isolated execution path. Return `MEDSDevRun` from its adapter
+   with the invocation, prediction directory, requested label index, and evaluated splits.
+3. **Pre-demo report and human gate:** complete the source ledger, scientific deviations, input mapping,
+   predicate interpretation, the results from the first two gates, and the proposed MIMIC execution plan
+   in `IMPLEMENTATION_REPORT.md`. Ask a human to review this evidence and the selected predicates before
+   accessing or running MIMIC-IV.
+4. **MIMIC-IV demo gate:** after approval, run `uv run pytest -m real_data -rs`. This builds or reuses the
+   MEDS-DEV demo, derives labels with `mortality/in_icu/first_24h`, reuses MEDS-DEV's MIMIC-IV predicates,
+   and runs the complete selected DAG. The purpose is to expose scale-dependent pipeline, resource,
+   serialization, and key-coverage failures before a full-data run.
+5. **Demo report and human gate:** add the exact demo revision, task and predicate provenance, cohort
+   counts, prediction-key coverage, measurements, failures, and fixes to the report. A human decides
+   whether the evidence is sufficient, reviews the shared full-data task bundle, and approves the full
+   MIMIC-IV resources and launch.
+6. **Commit and synchronize:** before submitting cluster jobs, commit the implementation, configuration,
+   and report-so-far; push the commit to GitHub; and record its immutable commit SHA. The cluster must run
+   that SHA from a clean checkout. The external task bundle is not committed.
+7. **Full MIMIC-IV run:** run the approved ten-task registry from
+   [meds-task-selection](https://github.com/florian6973/meds-task-selection) on the authorized full dataset,
+   normally through the SLURM interface. The cluster receives a shared `work/` task bundle containing
+   `tasks.yaml` and the generated per-task inputs/labels. Pass its path explicitly in configuration; do not
+   copy it into the model repository. Record the task-selection commit, `tasks.yaml` SHA-256, task bundle
+   identifier/path, dataset revision, model commit, exact command/configuration, job IDs, and structured run
+   evidence. Every model comparison must use the same reviewed bundle. Do not treat the demo result as a
+   scientific result.
+8. **Final report and result synchronization:** add per-task and aggregate full-data cohort/output counts,
+   measurements, scientific results, deviations, failures, and limitations. Run `scripts/github-sync.sh
+   <run-id>` to publish the structured result on its isolated run branch and open a draft PR for human
+   review. Raw MIMIC data, labels containing sensitive data, checkpoints, credentials, and raw logs remain
+   outside Git.
+
+Final predictions at every data gate must exactly cover the requested keys without relying on order. Do
+not assert portable performance thresholds; record wall time, process-tree PSS/RSS, GPU metrics,
+environment, and scale. Remove all placeholders and set `IS_STUB = False` only when the implemented DAG
+passes the applicable pre-demo gates; real-data access remains separately human-approved.
+
+### MIMIC-IV demo task scope
+
+The required demo task is `mortality/in_icu/first_24h`. It exercises an ICU trigger, a 24-hour input
+window, exclusions, binary labels, prediction-time alignment, and the MEDS-DEV predicate overlay while
+remaining a single deterministic smoke test.
+
+MEDS-DEV also currently declares these MIMIC-IV-supported candidates: anemia, leukocytosis,
+thrombocytopenia, hypotension, hyponatremia, metabolic acidosis, and elevated creatinine, all under their
+respective `abnormal_lab/.../first_24h` task paths. They are optional task-coverage tests, not required demo
+gates. Add one only when it is relevant to the model and its task definition resolves cleanly against the
+current MEDS-DEV MIMIC predicates and produces a non-degenerate demo cohort. Record the exact task revision
+rather than copying its dataset knowledge into this repository. These demo tasks are independent of the
+ten-task full-data benchmark: the demo validates execution and scale transition, while the frozen
+full-data task bundle supports consistent model evaluation.

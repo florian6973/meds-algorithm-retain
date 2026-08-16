@@ -1,0 +1,3 @@
+## MEDS-DEV installs this file from its own working directory. The registration helper replaces this
+## relative editable requirement with the generated repository's absolute path.
+-e .

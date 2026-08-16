@@ -1,0 +1,19 @@
+# Agent instructions
+
+Before editing, read `SPEC.md`, `README.md`, and `docs/IMPLEMENTATION_GUIDE.md` completely.
+
+- `src/meds_model_contract/` is the backend-neutral contract. Do not add framework, batching,
+  preprocessing-format, or model assumptions there.
+- `src/retain/`, `model.yaml`, command configuration, and `tests/e2e.py` are model-owned.
+- Preserve the `supervised` DAG and established command argument names.
+- Intermediate payloads are opaque. Generic tests validate their envelopes, not their contents.
+- MEDS-DEV owns dataset-specific predicates; the model owns their interpretation.
+- Never associate outputs with prediction keys by row order.
+- Keep `IS_STUB = True` until every registered command and the real end-to-end adapter work.
+- Run pytest with `-rs`, account for every skip, and require zero `model_stub` skips before completion.
+- Follow the ordered gates in `docs/IMPLEMENTATION_GUIDE.md`. Stop for human approval before the MIMIC-IV
+  demo and again before the full MIMIC-IV run; do not infer data access or cluster authorization.
+- Submit cluster jobs only from the recorded SHA of a clean, committed, pushed revision. Use the approved
+  external full-data `work/` task bundle, record its registry digest, and synchronize structured results.
+- Report exact source revisions, commands, coverage, and measurements in `IMPLEMENTATION_REPORT.md`.
+- Do not commit datasets, checkpoints, credentials, or raw cluster logs.
