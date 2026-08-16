@@ -77,6 +77,39 @@ def test_the_whole_dag_runs_on_cuda(tmp_path):
     assert predictions.get_column(PROBABILITY).null_count() == 0
 
 
+@pytest.mark.parametrize(
+    "device",
+    ["cpu", pytest.param("cuda", marks=requires_cuda)],
+)
+def test_two_runs_with_the_same_seed_are_bit_identical(tmp_path, device):
+    """The control that every cross-device claim rests on: fix the device, fix the seed, run twice.
+
+    This is the regression test for a seed-ordering bug -- seeding *after* the model is constructed, so
+    weight initialisation draws from an unseeded global generator. That failure is invisible in a
+    CPU-versus-CUDA comparison, where it would simply look like device noise, and it is only visible here.
+    It also covers a stray generator entering through the length-sorted batching, the per-epoch batch
+    reshuffle, or the fallback validation split.
+
+    Compared exactly, not within a tolerance: on a fixed device and a fixed seed there is no source of
+    legitimate variation to allow for.
+    """
+    _, first = _run_dag(tmp_path / "first", train_device=device, predict_device=device)
+    _, second = _run_dag(tmp_path / "second", train_device=device, predict_device=device)
+    assert first.equals(second)
+
+
+def test_different_seeds_produce_different_models(tmp_path):
+    """The other half of the control: prove the seed is actually wired in.
+
+    Without this, a pipeline that ignored `seed` entirely would still pass the test above.
+    """
+    _, first = _run_dag(tmp_path / "seed-0", train_device="cpu", predict_device="cpu", seed=0)
+    _, second = _run_dag(tmp_path / "seed-1", train_device="cpu", predict_device="cpu", seed=1)
+    assert not np.allclose(
+        first.get_column(PROBABILITY).to_numpy(), second.get_column(PROBABILITY).to_numpy()
+    )
+
+
 def test_weight_initialisation_does_not_depend_on_the_device():
     """`reset_parameters` runs before the move, so both devices start from the same weights."""
     config = RetainConfig(embed_size=8, alpha_hidden_dim_size=6, beta_hidden_dim_size=6)
