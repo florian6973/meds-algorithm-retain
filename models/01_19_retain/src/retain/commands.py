@@ -53,7 +53,7 @@ _PREDICTION_COLUMNS = (
 )
 
 #: Settings that describe the published vocabulary and therefore cannot be changed after preprocessing.
-_PREPROCESS_ONLY = ("min_code_count", "max_vocab_size")
+_PREPROCESS_ONLY = ("min_code_count", "max_vocab_size", "exclude_meds_standard_markers")
 
 #: Settings a prediction run may override without invalidating the trained model.
 _PREDICT_OVERRIDABLE = frozenset({"device", "batch_size", "interpretation_top_k"})

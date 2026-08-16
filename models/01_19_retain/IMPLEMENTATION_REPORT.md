@@ -62,6 +62,7 @@
 | `process_mimic.py` visit construction (admissions -> ICD-9 code sets) | adapted | `preprocess.py` + `windows.py` | MEDS has no admission concept without dataset predicates; see *Inputs* |
 | 20/10/70 or `.train`/`.valid`/`.test` file split (`load_data`, `load_data_simple`) | adapted | `commands._training_rows` | the MEDS dataset's own `train`/`tuning`/`held_out` splits are authoritative; the seeded fallback only fires when no `tuning` split exists |
 | 3-digit ICD-9 truncation / medical groupers (README, paper §4.1) | omitted | -- | both are dataset-specific vocabulary knowledge. Generic frequency filters (`min_code_count`, `max_vocab_size`) provide the same dimensionality control without encoding ICD semantics in a predicate-free port |
+| Demographics and outcome markers excluded from visits (paper §4.1 "diagnosis, medication and procedure codes"; `process_mimic.py` builds sequences from `DIAGNOSES_ICD` alone and reads `PATIENTS.csv` only for the label) | ported | `preprocess.MEDS_STANDARD_MARKERS`, `config.exclude_meds_standard_markers` | Drops `MEDS_BIRTH` and `MEDS_DEATH`. These are MEDS-standard codes, not dataset predicates, so naming them is not dataset knowledge |
 | Non-binary input values (paper Eq. 5 remark) | omitted | -- | the official code is binary-only (`xvec[subseq] = 1.`); MEDS `numeric_value` is ignored |
 | External pre-trained code embeddings (`--embed_file`, `--embed_finetune`) | omitted | -- | requires an external Med2Vec-style artefact that MEDS-DEV does not supply. `W_emb` is always randomly initialised and fine-tuned, which is the documented default |
 | Re-training from a saved model (`--model_file`) | omitted | -- | no contract command corresponds to resuming a fit; a rerun is a fresh `supervised_train` |
@@ -88,6 +89,7 @@
   | `x_j` | binary multi-hot over the vocabulary. A code repeated inside a bucket contributes once |
   | history for a key | events with `time <= prediction_time`, optionally limited by `lookback_days` and to the most recent `max_visits` visits. Both default to unrestricted |
   | static events | excluded. A `time = null` event has no position in a reverse-time visit sequence, and the published input is visit codes |
+  | `MEDS_BIRTH` / `MEDS_DEATH` | excluded by default (`exclude_meds_standard_markers`). The paper's visits are diagnosis, medication and procedure codes, and the official `process_mimic.py` reads `PATIENTS.csv` only to derive the label. Keeping `MEDS_BIRTH` made it the first visit of 100% of demo windows, decades before the rest; keeping `MEDS_DEATH` would put the canonical outcome marker in the input space of any task whose window reaches it |
   | `numeric_value` | ignored, matching the binary official implementation |
   | splits | MEDS `train` fits the parameters, `tuning` selects the epoch, `held_out` is scored |
 
@@ -246,9 +248,12 @@ this cohort that population is **empty**:
 
 | Split | Keys | Positives | Subjects | **Empty-history keys** | Visits/key mean | p50 | p90 | max |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| train | 60 | 8 | 47 | **0 (0.00%)** | 27.17 | 9 | 82 | 219 |
-| tuning | 8 | 1 | 5 | **0 (0.00%)** | 10.50 | 10 | 18 | 22 |
-| held_out | 6 | 0 | 4 | **0 (0.00%)** | 8.83 | 7 | 16 | 18 |
+| train | 60 | 8 | 47 | **0 (0.00%)** | 26.17 | 8 | -- | 218 |
+| tuning | 8 | 1 | 5 | **0 (0.00%)** | 9.50 | 9 | -- | 21 |
+| held_out | 6 | 0 | 4 | **0 (0.00%)** | 7.83 | 6 | -- | 17 |
+
+Measured after the `MEDS_BIRTH` exclusion described below. Before it, every row carried one extra visit
+(27.17 / 10.50 / 8.83) and the median history span read 23,311 days rather than 151.
 
 No prediction on this cohort is uninformed, so no metric is diluted by intercept-only scores. This differs
 from the synthetic fixture (10.0% / 7.7% / 7.7%), where the degenerate cohort was planted deliberately: the
@@ -257,8 +262,8 @@ guarantee still holds and is still what keeps key coverage exact; it simply has 
 
 ### Visit-count distribution — the evidence behind the 1-day granularity decision
 
-With `visit_bucket_minutes = 1440` the training split averages **27.17 visits per key** (median 9, p90 82,
-max 219). Daily bucketing therefore yields a genuinely multi-visit sequence on real data rather than the
+With `visit_bucket_minutes = 1440` the training split averages **26.17 visits per key** (median 8, max 218),
+spanning a median of **151 days** of prior record. Daily bucketing therefore yields a genuinely multi-visit sequence on real data rather than the
 one-or-two-visit degenerate case that motivated the original question, and the long tail is exactly the
 prior EHR history that the operator's rationale — keeping the EHR-versus-ICU importance distinction
 visible — depends on. The decision to keep the 1-day default is supported by this measurement.
@@ -277,10 +282,11 @@ real-data scale, which it did.
 |---|---|
 | Events read | 1,022,555 |
 | Static events excluded (`time = null`) | 100 |
+| MEDS standard markers excluded (`MEDS_BIRTH`, `MEDS_DEATH`) | 131 |
 | Out-of-vocabulary events dropped | 1,003 (0.107%) |
-| Events retained | 938,659 |
+| Events retained | 938,528 |
 | `(subject, time)` event groups | 96,783 |
-| Distinct codes in dataset / vocabulary learned from train split | 7,523 / **7,087** |
+| Distinct codes in dataset / vocabulary learned from train split | 7,523 / **7,085** |
 
 The vocabulary binds to real MIMIC-IV MEDS codes across every clinical family — 2,300 `LAB`, 2,262
 `MEDICATION`, 1,350 `DIAGNOSIS`, 457 `PROCEDURE`, 237 `DRG`, 157 `INFUSION_START`/`INFUSION_END`, plus
@@ -344,6 +350,60 @@ only. Deliberately not applied to the dataset invocation: it would be harmless, 
 own venv over anything passed, but it would encode a defect that does not exist. `tests/integration.py`
 needed no change and remains byte-identical at
 `sha256:cb5a2eccbafe8cb9f0c2c2329bd56c165596a54d3d2099cd9eb95d1c7753ed58`.
+
+## Scaling measurement
+
+Run at the **official model size** (embed 128, alpha/beta 128, batch 100, 10 epochs) on the real demo
+cohort replicated 1x/4x/16x/64x with offset subject ids, so the event, code and visit distributions stay
+authentic and only the scale changes. Replication holds the vocabulary fixed at 7,085; vocabulary growth is
+treated separately below.
+
+| Factor | Subjects | Events | Keys | `preprocess` s | `train` s | `predict` s | `preprocess` RSS | `train` RSS | GPU |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1x | 100 | 1,022,555 | 74 | 0.25 | 1.62 | 0.09 | 1,656 MB | 1,918 MB | 169 MB |
+| 4x | 400 | 4,090,220 | 296 | 0.57 | 0.65 | 0.13 | 4,674 MB | 3,518 MB | 168 MB |
+| 16x | 1,600 | 16,360,880 | 1,184 | 1.63 | 1.47 | 0.25 | 10,181 MB | 5,537 MB | 228 MB |
+| 64x | 6,400 | 65,443,520 | 4,736 | 6.47 | 5.56 | 0.81 | 28,534 MB | 10,042 MB | 325 MB |
+
+The 1x `train` figure includes CUDA context creation; the 4x-64x rows are the ones to read for growth.
+
+**Wall time is not a constraint.** 65.4M events tokenise in 6.5 s (~10M events/s) and 4,736 keys train for
+10 epochs in 5.6 s. **GPU memory is not a constraint either**: 325 MB at 64x, because the model is
+`|C| x 128` embeddings plus two 128-wide GRUs and the batch is bounded by `batch_size` visits, not by
+cohort size.
+
+### Host RAM is the binding constraint, and it is set by shard size rather than dataset size
+
+The 28.5 GB at 64x looked alarming until it was attributed. Peak RSS is `O(largest shard)`, because both
+`preprocess_data` and `build_sequences` read one shard at a time into memory. The replication above wrote a
+single file per split, which is the worst case. Re-sharding the identical 16.4M-event dataset:
+
+| Shards per split | Rows in largest shard | `preprocess` wall s | Peak RSS |
+|---:|---:|---:|---:|
+| 1 | 14,391,408 | 1.96 | 7,968 MB |
+| 8 | 2,653,888 | 1.78 | 2,285 MB |
+| 32 | 1,102,320 | 2.72 | **1,357 MB** |
+
+Same data, same work, same wall time; a 5.9x memory reduction from sharding alone. The empirical rule is
+
+> **peak RSS ~ 1 GB baseline + ~0.5 KB per row of the largest shard**
+
+which held to within +/-20% across all three points. A full MIMIC-IV extract sharded at MEDS-DEV's usual
+granularity should therefore sit in single-digit GB regardless of total size, and **the number to check
+before submitting is the row count of the largest shard, not the size of the dataset**. If the extract has
+few, very large shards, the mitigation is re-sharding the input, not more RAM.
+
+### What this measurement does not cover
+
+- **Vocabulary growth.** Replication holds `|C|` at 7,085. The embedding is `|C| x embed_size` float32, so
+  a full extract with 100k codes costs 100,000 x 128 x 4 = **51 MB** of parameters, plus its Adadelta
+  accumulators (2x) and gradient (1x) -- roughly 200 MB total, still not a constraint. `max_vocab_size`
+  bounds it if needed but does not appear to be needed.
+- **Visit-count tail.** The longest demo history is 218 visits. `max_visits` bounds the per-sequence cost
+  if a full-data subject has an extreme record; unset by default and not obviously needed at these figures.
+- **Key count at full scale.** The ten-task registry has not been read, so the number of prediction keys per
+  task is unknown. `train` cost is close to linear in keys over the measured range (296 -> 4,736 keys is
+  16x rows for 8.5x time), so this is the quantity that should drive the time request.
 
 ## Review gates
 
@@ -516,10 +576,9 @@ epochs, and 9% of its keys are scored at the intercept. The validation AUC recor
    measurement now reads 0. Note that rebuilding a fixture twice does *not* detect this — a fixture that
    writes canonically reproduces its own layout and the check passes while the defect remains — so the
    regression test permutes row order directly.
-10. **The demo cohort cannot validate the full-data resource envelope.** Tokenising 1.02M events took
-    0.22 s and training the official architecture took 1.57 s, three orders of magnitude below a full
-    MIMIC-IV extract. The demo establishes that the pipeline works at real-data *shape* — 7,087 codes, 219
-    visits on the longest history, a million events — not at full-data *scale*. Vocabulary size and the
-    visit-count tail are the two quantities that will grow, and `max_visits` and `max_vocab_size` exist to
-    bound them; neither is set at present. A resource estimate for the full run should be derived from a
-    scaling measurement, not extrapolated from these numbers.
+10. **Resource behaviour is measured to 65M events, not to full-data scale.** The scaling section above
+    replicates the real demo cohort to 64x. Wall time and GPU memory are comfortable there; host RAM is the
+    binding constraint and is governed by the largest input shard rather than by dataset size. Two things
+    remain unmeasured: vocabulary growth (replication holds `|C|` fixed, though the arithmetic puts a
+    100k-code embedding at ~51 MB of parameters) and the number of prediction keys per task in the ten-task
+    registry, which has not been read. The key count is what should drive the time request.

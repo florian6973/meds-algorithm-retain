@@ -32,6 +32,11 @@ HELD_OUT_SPLIT = "held_out"
 
 EVENT_COLUMNS = ("subject_id", "time", "code")
 
+#: The MEDS standard's two non-clinical subject markers. `MEDS_BIRTH` is a demographic anchor and
+#: `MEDS_DEATH` is the canonical outcome marker; neither is a clinical event of the kind RETAIN's visits
+#: are made of. Defined by the MEDS schema itself, so naming them here is not dataset knowledge.
+MEDS_STANDARD_MARKERS = ("MEDS_BIRTH", "MEDS_DEATH")
+
 
 def data_files(meds_dir: Path) -> list[Path]:
     root = Path(meds_dir) / "data"
@@ -67,6 +72,13 @@ def read_split_map(meds_dir: Path) -> pl.DataFrame:
     )
 
 
+def _keeps_code(config: RetainConfig) -> pl.Expr:
+    """Row filter dropping the MEDS standard markers when configured to."""
+    if not config.exclude_meds_standard_markers:
+        return pl.lit(True)
+    return ~pl.col("code").is_in(list(MEDS_STANDARD_MARKERS))
+
+
 def _build_vocabulary(files: list[Path], train_subjects: pl.DataFrame, config: RetainConfig) -> pl.DataFrame:
     """Count codes over training subjects and assign integer indices, most frequent first."""
     counts: pl.DataFrame | None = None
@@ -75,6 +87,7 @@ def _build_vocabulary(files: list[Path], train_subjects: pl.DataFrame, config: R
             pl.scan_parquet(path)
             .select("subject_id", "time", "code")
             .filter(pl.col("time").is_not_null())
+            .filter(_keeps_code(config))
             .with_columns(pl.col("subject_id").cast(pl.Int64))
             .join(train_subjects.lazy(), on="subject_id", how="semi")
             .group_by("code")
@@ -121,7 +134,13 @@ def preprocess(meds_dir: Path, staging: Path, config: RetainConfig) -> dict[str,
     lookup = vocabulary.select("code", "code_index")
 
     sequences = staging / "sequences"
-    totals = {"events": 0, "static_events": 0, "out_of_vocabulary_events": 0, "kept_events": 0}
+    totals = {
+        "events": 0,
+        "static_events": 0,
+        "meds_standard_marker_events": 0,
+        "out_of_vocabulary_events": 0,
+        "kept_events": 0,
+    }
     subjects: set[int] = set()
     event_groups = 0
     for path in files:
@@ -133,8 +152,10 @@ def preprocess(meds_dir: Path, staging: Path, config: RetainConfig) -> dict[str,
         totals["events"] += frame.height
         timestamped = frame.filter(pl.col("time").is_not_null())
         totals["static_events"] += frame.height - timestamped.height
-        mapped = timestamped.join(lookup, on="code", how="inner")
-        totals["out_of_vocabulary_events"] += timestamped.height - mapped.height
+        clinical = timestamped.filter(_keeps_code(config))
+        totals["meds_standard_marker_events"] += timestamped.height - clinical.height
+        mapped = clinical.join(lookup, on="code", how="inner")
+        totals["out_of_vocabulary_events"] += clinical.height - mapped.height
         # One row per (subject, timestamp, code): RETAIN's input is binary, so a code repeated at the
         # same instant must contribute once, exactly as `xvec[subseq] = 1.` does upstream.
         events = (

@@ -55,6 +55,15 @@ class RetainConfig:
     #: Vocabulary filters. The vocabulary is learned from the training split only.
     min_code_count: int = 1
     max_vocab_size: int | None = None
+    #: Drop the MEDS standard's two non-clinical subject markers, `MEDS_BIRTH` and `MEDS_DEATH`, from the
+    #: code stream. Both the paper (§4.1: visits are "diagnosis, medication and procedure codes") and
+    #: `process_mimic.py` (sequences built from `DIAGNOSES_ICD` alone, `PATIENTS.csv` read only to derive
+    #: the label) exclude demographics and outcome markers from the visit sequence. Keeping `MEDS_BIRTH`
+    #: makes a birth record the first visit of essentially every sequence, decades before the rest, where
+    #: it consumes one of RETAIN's visit-attention slots; keeping `MEDS_DEATH` puts the canonical outcome
+    #: marker in the input space of any task whose window can reach it. These are MEDS-standard codes, not
+    #: dataset predicates, so excluding them keeps this port predicate-free.
+    exclude_meds_standard_markers: bool = True
 
     # -- Official `retain.py` options ---------------------------------------------------------------
     #: `--time_file`: upstream defaults to no time information, so this defaults to false.

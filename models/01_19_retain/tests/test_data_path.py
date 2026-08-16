@@ -230,3 +230,36 @@ def test_max_vocab_size_keeps_the_most_frequent_codes(tmp_path):
     dataset = _write_dataset(tmp_path / "meds", ROWS, SPLITS)
     preprocess(dataset, _staged(tmp_path / "data"), RetainConfig(max_vocab_size=2))
     assert PatientStore(tmp_path / "data").code_strings()[0] == "A"
+
+
+def test_meds_standard_markers_are_excluded_from_the_visit_sequence(tmp_path):
+    """The paper and the official code both keep demographics and outcome markers out of a visit.
+
+    Paper section 4.1 builds visits from "diagnosis, medication and procedure codes"; age is a cohort
+    restriction, not a feature. `process_mimic.py` builds sequences from `DIAGNOSES_ICD` alone and reads
+    `PATIENTS.csv` only to derive the mortality label. `MEDS_BIRTH` would otherwise be the first visit of
+    essentially every sequence, decades before the rest, holding one of RETAIN's attention slots;
+    `MEDS_DEATH` would put the canonical outcome marker in the input space.
+    """
+    rows = list(ROWS) + [
+        {"subject_id": 1, "time": datetime(1950, 5, 5), "code": "MEDS_BIRTH"},
+        {"subject_id": 1, "time": datetime(2020, 1, 6), "code": "MEDS_DEATH"},
+        {"subject_id": 2, "time": datetime(1955, 5, 5), "code": "MEDS_BIRTH"},
+    ]
+    dataset = _write_dataset(tmp_path / "meds", rows, SPLITS)
+    record = preprocess(dataset, _staged(tmp_path / "data"), RetainConfig())
+    patients = PatientStore(tmp_path / "data")
+    assert "MEDS_BIRTH" not in patients.code_strings()
+    assert "MEDS_DEATH" not in patients.code_strings()
+    assert record["meds_standard_marker_events"] == 3
+
+    batch = build_sequences(patients, _keys(1, datetime(2020, 1, 7)), RetainConfig())
+    # Without the exclusion the 1950 birth would be visit 0, seventy years before the rest.
+    assert _visits(batch)[0][0] == int(np.datetime64(datetime(2020, 1, 1), "us").astype(np.int64))
+
+
+def test_the_marker_exclusion_can_be_turned_off(tmp_path):
+    rows = list(ROWS) + [{"subject_id": 1, "time": datetime(1950, 5, 5), "code": "MEDS_BIRTH"}]
+    dataset = _write_dataset(tmp_path / "meds", rows, SPLITS)
+    preprocess(dataset, _staged(tmp_path / "data"), RetainConfig(exclude_meds_standard_markers=False))
+    assert "MEDS_BIRTH" in PatientStore(tmp_path / "data").code_strings()
