@@ -182,7 +182,7 @@ written last, and a failure removes the staging directory without publishing
 
 | Suite/run | Exact command | Pass/skip counts | Coverage/result |
 |---|---|---|---|
-| Local | `uv run pytest -rs` | 52 passed, 2 skipped, 0 failed. **0 `model_stub` skips** | Real three-command DAG on the synthetic fixture. 66/66 requested keys covered exactly, keys unique, prediction schema aligned by `meds_evaluation.PredictionSchema` |
+| Local | `uv run pytest -rs` | 58 passed, 2 skipped, 0 failed. **0 `model_stub` skips** | Real three-command DAG on the synthetic fixture. 66/66 requested keys covered exactly, keys unique, prediction schema aligned by `meds_evaluation.PredictionSchema` |
 | MEDS-DEV | `uv run pytest -m meds_dev -rs` | 1 passed, 53 deselected, 0 skipped, 0 failed | `meds-dev-model model=retain mode=full dataset_type=supervised` in MEDS-DEV's own isolated venv (torch 2.13.0 and `retain 0.1.0` installed there from `requirements.txt`). 13/13 `held_out` keys covered exactly |
 | MIMIC-IV demo | `uv run pytest -m real_data -rs` | not run | Blocked pending explicit human approval on issue #3 |
 | Full MIMIC-IV | not run | not run | Blocked pending a separate human approval after the demo gate |
@@ -190,7 +190,15 @@ written last, and a failure removes the staging directory without publishing
 The two skips in the local run are `tests/test_meds_dev_e2e.py` and `tests/test_mimic_demo_e2e.py`, both
 reported by `-rs` as `select -m meds_dev or -m real_data, or set MEDS_DEV_DIR`. They are the marker-gated
 integration tiers, not stub skips; the `model_stub` skip guards are unreachable because `IS_STUB` is
-`False`.
+`False`. On a host with no CUDA device, four tests in `tests/test_device.py` add a fifth accounted-for skip
+reason, `no CUDA device on this host`; on this host they run.
+
+**Both reported gates exercised the GPU.** `device` defaults to `auto`, so `supervised_train` and `predict`
+resolved to CUDA in the local and MEDS-DEV runs, and their manifests carry real
+`torch.cuda.max_memory_allocated` byte counts rather than nulls. The demo and full runs will therefore not
+be the first time this port touches an accelerator. `tests/test_device.py` additionally pins the whole DAG
+on CPU only, on CUDA only, and trained-on-CUDA/scored-on-CPU, since a CPU-only node is an ordinary cluster
+shape that a GPU-defaulting suite would otherwise never cover.
 
 Beyond the contract's own conformance tests, this port adds:
 
@@ -202,6 +210,9 @@ Beyond the contract's own conformance tests, this port adds:
   vocabulary, closed-vocabulary dropping, daily bucketing and within-bucket deduplication, per-timestamp
   bucketing, the prediction-time boundary in both settings, the non-straddling cut, `lookback_days`,
   `max_visits`, empty histories, visit gaps, and both split-map sources.
+- `tests/test_device.py` (6 tests, 4 CUDA-gated) -- the whole DAG on CPU and on CUDA, a CUDA checkpoint
+  scored on CPU, device-independent weight initialisation, CPU/CUDA numerical agreement with dropout
+  disabled, and that the pinned `bias_hh` survives a device move and GPU training.
 - `tests/test_commands.py` (19 tests) -- exact key coverage including empty histories, split restriction,
   the Eq. (5) contributions summing back to the score they explain, artifact type/format rejection,
   predicate rejection on all three commands, mistyped-argument rejection, the preprocess-only vocabulary
@@ -288,3 +299,12 @@ epochs, and 9% of its keys are scored at the intercept. The validation AUC recor
 7. **Single-GPU, single-process.** No distributed training, no gradient accumulation, no mixed precision.
    Whether that is sufficient for full MIMIC-IV is a question for the full-run resource review; the demo
    gate is the first evidence that would inform it.
+8. **A seeded run is reproducible on a fixed device, but not across devices.** CUDA draws dropout masks
+   from its own generator, so the same `seed` yields different masks on CPU and on CUDA and therefore a
+   different fit. This was measured, not assumed: weight initialisation is byte-identical across devices
+   (`reset_parameters` runs before the move), and with `keep_prob_emb=keep_prob_context=1.0` the two
+   devices agree to `rtol=1e-4`; with RETAIN's default 0.5 keep-probabilities the trained models differ by
+   about 1% in predicted probability on the fixture. This is documented PyTorch behaviour rather than a
+   defect here, but it has a benchmark consequence: **model comparisons must hold the device fixed**, and
+   a result reproduced on different hardware will not match bit for bit. The forward pass itself is
+   device-portable — a CUDA-trained checkpoint scored on CPU reproduces its CUDA scores to `rtol=1e-4`.
