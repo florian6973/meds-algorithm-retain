@@ -17,7 +17,17 @@ VALUE_COLUMNS = ("boolean_value", "integer_value", "float_value", "categorical_v
 
 
 def read_labels(labels_dir: Path | str) -> pl.DataFrame:
-    """Read every parquet under `labels_dir` into one frame with unique keys."""
+    """Read every parquet under `labels_dir` into one frame with unique keys, in canonical key order.
+
+    The canonical sort is load-bearing, not tidiness. SPEC section 5 says row order is never meaningful,
+    and the task index is written by ACES through operations with no ordering guarantee, so the same task
+    can be materialised with identical content in a different row order. Without a canonical order that
+    difference reaches the fit: row position decides how equal-length ties resolve when minibatches are
+    built, which changes batch composition and therefore the gradients, at a fixed seed.
+
+    Sorting by the value columns as well as the keys makes the `keep="first"` deduplication
+    content-determined too, rather than a function of which duplicate happened to be read first.
+    """
     directory = Path(labels_dir)
     files = sorted(path for path in directory.rglob("*.parquet") if not path.name.startswith("."))
     if not files:
@@ -31,6 +41,8 @@ def read_labels(labels_dir: Path | str) -> pl.DataFrame:
         pl.col("subject_id").cast(pl.Int64),
         pl.col("prediction_time").cast(pl.Datetime("us")),
     )
+    ordering = [column for column in (*KEY_COLUMNS, *VALUE_COLUMNS) if column in labels.columns]
+    labels = labels.sort(by=ordering)
     return labels.unique(subset=list(KEY_COLUMNS), keep="first", maintain_order=True)
 
 

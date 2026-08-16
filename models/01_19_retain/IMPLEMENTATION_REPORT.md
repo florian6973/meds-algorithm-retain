@@ -182,7 +182,7 @@ written last, and a failure removes the staging directory without publishing
 
 | Suite/run | Exact command | Pass/skip counts | Coverage/result |
 |---|---|---|---|
-| Local | `uv run pytest -rs` | 61 passed, 2 skipped, 0 failed. **0 `model_stub` skips** | Real three-command DAG on the synthetic fixture. 66/66 requested keys covered exactly, keys unique, prediction schema aligned by `meds_evaluation.PredictionSchema` |
+| Local | `uv run pytest -rs` | 66 passed, 2 skipped, 0 failed. **0 `model_stub` skips** | Real three-command DAG on the synthetic fixture. 66/66 requested keys covered exactly, keys unique, prediction schema aligned by `meds_evaluation.PredictionSchema` |
 | MEDS-DEV | `uv run pytest -m meds_dev -rs` | 1 passed, 53 deselected, 0 skipped, 0 failed | `meds-dev-model model=retain mode=full dataset_type=supervised` in MEDS-DEV's own isolated venv (torch 2.13.0 and `retain 0.1.0` installed there from `requirements.txt`). 13/13 `held_out` keys covered exactly |
 | MIMIC-IV demo | `uv run pytest -m real_data -rs` | not run | Blocked pending explicit human approval on issue #3 |
 | Full MIMIC-IV | not run | not run | Blocked pending a separate human approval after the demo gate |
@@ -214,6 +214,10 @@ Beyond the contract's own conformance tests, this port adds:
   both devices and its different-seeds counterpart, the whole DAG on CPU and on CUDA, a CUDA checkpoint
   scored on CPU, device-independent weight initialisation, CPU/CUDA numerical agreement with dropout
   disabled, and that the pinned `bias_hh` survives a device move and GPU training.
+- `tests/test_determinism.py` (5 tests) -- that a run reproduces from the content of its inputs rather
+  than their file layout: permuted label row order leaves predictions bit-identical, `read_labels` imposes
+  a canonical order, minibatch composition is invariant to the order keys arrive in, vocabulary selection
+  breaks frequency ties on the code string, and the fixture itself rebuilds byte-identically.
 - `tests/test_commands.py` (19 tests) -- exact key coverage including empty histories, split restriction,
   the Eq. (5) contributions summing back to the score they explain, artifact type/format rejection,
   predicate rejection on all three commands, mistyped-argument rejection, the preprocess-only vocabulary
@@ -321,3 +325,13 @@ epochs, and 9% of its keys are scored at the intercept. The validation AUC recor
    CPU reproduces its CUDA scores to `rtol=1e-4`. Determinism is verified at smoke scale (3 epochs, batch
    8, 66 keys); CUDA kernels that reduce with atomics can be nondeterministic at larger scale, so the
    control should be re-read at demo and full-data scale rather than assumed to carry over.
+9. **Reproducibility depends on the task index's content, not its row order — by construction, after a
+   fix.** The MEDS label schema gives row order no meaning and ACES writes the index through operations
+   with no ordering guarantee, so the same task can be materialised with identical content in a different
+   order. That difference used to reach the fit here: `len_argsort` resolved equal-length ties by row
+   position, so a permuted index produced different minibatches and a different model at the same seed
+   (measured: up to 9.19e-04 in predicted probability on the fixture). `read_labels` now imposes a
+   canonical key order and `_length_sorted` breaks ties on `(subject_id, prediction_time)`; the same
+   measurement now reads 0. Note that rebuilding a fixture twice does *not* detect this — a fixture that
+   writes canonically reproduces its own layout and the check passes while the defect remains — so the
+   regression test permutes row order directly.

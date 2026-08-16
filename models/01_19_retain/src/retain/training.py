@@ -187,8 +187,15 @@ class TrainingHistory:
 
 
 def _length_sorted(batch: SequenceBatch) -> np.ndarray:
-    """`len_argsort`: order rows by sequence length so a minibatch pads as little as possible."""
-    return np.argsort(batch.lengths, kind="stable")
+    """`len_argsort`: order rows by sequence length so a minibatch pads as little as possible.
+
+    Ties break on `(subject_id, prediction_time)` rather than on row position. Upstream's `len_argsort`
+    is a stable sort on a list whose order is fixed by a pickled file, so position is a stable tiebreak
+    there; here the rows come from a task index whose row order carries no meaning and is not guaranteed
+    to be reproduced. Leaving the tie on position would let two byte-different but content-identical label
+    files produce different minibatches, and so a different fit, at the same seed.
+    """
+    return np.lexsort((batch.keys[:, 1], batch.keys[:, 0], batch.lengths))
 
 
 def score(
