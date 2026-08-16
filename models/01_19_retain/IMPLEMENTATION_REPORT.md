@@ -210,8 +210,8 @@ Beyond the contract's own conformance tests, this port adds:
   vocabulary, closed-vocabulary dropping, daily bucketing and within-bucket deduplication, per-timestamp
   bucketing, the prediction-time boundary in both settings, the non-straddling cut, `lookback_days`,
   `max_visits`, empty histories, visit gaps, and both split-map sources.
-- `tests/test_device.py` (9 tests, 5 CUDA-gated) -- the same-seed same-device determinism control on
-  both devices and its different-seeds counterpart, the whole DAG on CPU and on CUDA, a CUDA checkpoint
+- `tests/test_device.py` (9 tests, 5 CUDA-gated) -- the same-seed determinism control, exact on CPU and
+  within a stated tolerance on CUDA, its different-seeds counterpart, the whole DAG on CPU and on CUDA, a CUDA checkpoint
   scored on CPU, device-independent weight initialisation, CPU/CUDA numerical agreement with dropout
   disabled, and that the pinned `bias_hh` survives a device move and GPU training.
 - `tests/test_determinism.py` (5 tests) -- that a run reproduces from the content of its inputs rather
@@ -322,9 +322,31 @@ epochs, and 9% of its keys are scored at the intercept. The validation AUC recor
    This is documented PyTorch behaviour rather than a defect here, but it has a benchmark consequence:
    **model comparisons must hold the device fixed**, and a result reproduced on different hardware will
    not match bit for bit. The forward pass itself is device-portable — a CUDA-trained checkpoint scored on
-   CPU reproduces its CUDA scores to `rtol=1e-4`. Determinism is verified at smoke scale (3 epochs, batch
-   8, 66 keys); CUDA kernels that reduce with atomics can be nondeterministic at larger scale, so the
-   control should be re-read at demo and full-data scale rather than assumed to carry over.
+   CPU reproduces its CUDA scores to `rtol=1e-4`.
+
+   *How far the CUDA exactness observation extends.* It was measured at every scale reachable without real
+   data and held at all of them:
+
+   | Configuration | CPU | CUDA |
+   |---|---|---|
+   | smoke: embed 16, hidden 16, batch 8, 3 epochs, 66 keys | `0.000e+00` | `0.000e+00` |
+   | official defaults: embed 128, hidden 128, batch 100, 10 epochs | `0.000e+00` | `0.000e+00` |
+   | wide: embed 256, hidden 256, batch 16, 20 epochs | `0.000e+00` | `0.000e+00` |
+   | 1,637 keys from 1,500 subjects, official defaults | `0.000e+00` | `0.000e+00` |
+
+   The last row is the one that matters for the atomics question: many rows reducing into a small
+   vocabulary is the worst case for collision in `embedding_bag` backward, and it still reproduced
+   exactly. Even so, **the CUDA test asserts a tolerance of `1e-5` rather than equality.** Exactness on an
+   accelerator is a property of the kernels a model happens to use and the scale it runs at, not a
+   guarantee: a sibling port measured a one-ULP (`5.96e-08`) disagreement in its own kernels under the
+   same control. Asserting equality would promise something the hardware does not and would become an
+   intermittent failure at full-data scale, where the first red run would be misread as a defect. The
+   threshold sits three orders of magnitude above a ULP and three below the smallest real determinism
+   defect observed in this project (`9.19e-04`, limitation 9), so it separates the two cleanly.
+
+   The benchmark-design consequence, which applies whether or not this port's kernels stay exact:
+   **a GPU run cannot be assumed reproducible bit-for-bit from its recorded seed alone, so cross-run and
+   cross-port comparisons at the demo and full-data gates need a stated tolerance rather than equality.**
 9. **Reproducibility depends on the task index's content, not its row order — by construction, after a
    fix.** The MEDS label schema gives row order no meaning and ACES writes the index through operations
    with no ordering guarantee, so the same task can be materialised with identical content in a different

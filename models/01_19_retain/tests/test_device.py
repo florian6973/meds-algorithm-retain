@@ -26,6 +26,7 @@ from .fixtures import SMOKE_HYPERPARAMETERS, write_meds_dataset, write_task_labe
 requires_cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA device on this host")
 
 PROBABILITY = "predicted_boolean_probability"
+KEYS = ["subject_id", "prediction_time"]
 
 
 def _run_dag(root, *, train_device, predict_device, **overrides):
@@ -77,11 +78,14 @@ def test_the_whole_dag_runs_on_cuda(tmp_path):
     assert predictions.get_column(PROBABILITY).null_count() == 0
 
 
-@pytest.mark.parametrize(
-    "device",
-    ["cpu", pytest.param("cuda", marks=requires_cuda)],
-)
-def test_two_runs_with_the_same_seed_are_bit_identical(tmp_path, device):
+#: A real determinism defect moves predictions by 1e-4 or more -- the label-row-order defect fixed in this
+#: port measured 9.19e-04, and the seed-ordering bugs found in sibling ports measured 4e-2 to 8e-2.
+#: Non-deterministic accelerator reduction order costs a float32 ULP, around 6e-8. This threshold sits
+#: three orders of magnitude clear of both, so it catches the former without ever tripping on the latter.
+CUDA_DETERMINISM_TOLERANCE = 1e-5
+
+
+def test_two_runs_with_the_same_seed_are_bit_identical_on_cpu(tmp_path):
     """The control that every cross-device claim rests on: fix the device, fix the seed, run twice.
 
     This is the regression test for a seed-ordering bug -- seeding *after* the model is constructed, so
@@ -90,12 +94,37 @@ def test_two_runs_with_the_same_seed_are_bit_identical(tmp_path, device):
     It also covers a stray generator entering through the length-sorted batching, the per-epoch batch
     reshuffle, or the fallback validation split.
 
-    Compared exactly, not within a tolerance: on a fixed device and a fixed seed there is no source of
-    legitimate variation to allow for.
+    Pinned to CPU and compared exactly, because CPU is where exactness is actually guaranteed.
     """
-    _, first = _run_dag(tmp_path / "first", train_device=device, predict_device=device)
-    _, second = _run_dag(tmp_path / "second", train_device=device, predict_device=device)
+    _, first = _run_dag(tmp_path / "first", train_device="cpu", predict_device="cpu")
+    _, second = _run_dag(tmp_path / "second", train_device="cpu", predict_device="cpu")
     assert first.equals(second)
+
+
+@requires_cuda
+def test_two_runs_with_the_same_seed_agree_on_cuda(tmp_path):
+    """The same control on CUDA, asserted within a tolerance rather than exactly.
+
+    Measured on this host, this port is bit-identical on CUDA at every scale reachable without real data:
+    smoke size, the official hyper-parameters, a 256-wide model at 20 epochs, and a 1,637-key cohort. But
+    exactness on an accelerator is a property of the particular kernels a model uses and the scale it runs
+    at, not a guarantee -- a sibling port measured a one-ULP disagreement from non-deterministic reduction
+    order in its own kernels. RETAIN's hot path includes `embedding_bag` and scatter backward, both of
+    which may reduce with atomics on larger inputs than anything testable here.
+
+    Asserting equality would therefore promise something the hardware does not, and would turn into an
+    intermittent failure at demo or full-data scale -- where the first red run would be read as a defect
+    rather than as expected behaviour. So this asserts what is guaranteed and measures what is not.
+    """
+    _, first = _run_dag(tmp_path / "first", train_device="cuda", predict_device="cuda")
+    _, second = _run_dag(tmp_path / "second", train_device="cuda", predict_device="cuda")
+    assert first.select(KEYS).equals(second.select(KEYS))
+    np.testing.assert_allclose(
+        first.get_column(PROBABILITY).to_numpy(),
+        second.get_column(PROBABILITY).to_numpy(),
+        rtol=0,
+        atol=CUDA_DETERMINISM_TOLERANCE,
+    )
 
 
 def test_different_seeds_produce_different_models(tmp_path):
