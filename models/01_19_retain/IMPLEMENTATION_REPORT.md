@@ -184,7 +184,7 @@ written last, and a failure removes the staging directory without publishing
 |---|---|---|---|
 | Local | `uv run pytest -rs` | 66 passed, 2 skipped, 0 failed. **0 `model_stub` skips** | Real three-command DAG on the synthetic fixture. 66/66 requested keys covered exactly, keys unique, prediction schema aligned by `meds_evaluation.PredictionSchema` |
 | MEDS-DEV | `uv run pytest -m meds_dev -rs` | 1 passed, 53 deselected, 0 skipped, 0 failed | `meds-dev-model model=retain mode=full dataset_type=supervised` in MEDS-DEV's own isolated venv (torch 2.13.0 and `retain 0.1.0` installed there from `requirements.txt`). 13/13 `held_out` keys covered exactly |
-| MIMIC-IV demo | `uv run pytest -m real_data -rs` | not run | Blocked pending explicit human approval on issue #3 |
+| MIMIC-IV demo | `uv run pytest -m real_data -rs` | 1 passed, 67 deselected, 0 skipped, 0 failed | Full DAG on the MEDS-DEV MIMIC-IV demo and the pinned `mortality/in_icu/first_24h` task. 6/6 `held_out` keys covered exactly, keys unique, schema aligned |
 | Full MIMIC-IV | not run | not run | Blocked pending a separate human approval after the demo gate |
 
 The two skips in the local run are `tests/test_meds_dev_e2e.py` and `tests/test_mimic_demo_e2e.py`, both
@@ -224,12 +224,133 @@ Beyond the contract's own conformance tests, this port adds:
   guard, atomic non-publication on failure, overwrite protection, gradient flow to every trainable
   parameter, and that training separates a synthetic separable signal.
 
+## MIMIC-IV demo gate
+
+Approved by the repository owner on issue #3 at commit `ae298931d3b267de94ba353f5921b74000151ca6`, for the
+demo cohort and the pinned task only. Run on 2026-08-16.
+
+### Provenance
+
+| Item | Value |
+|---|---|
+| MEDS-DEV revision | `0c21a2226964181dee7ed28c9aa5aa0abdfe9765` (pinned by `tests/integration.py`) |
+| Dataset | MIMIC-IV demo, `dataset_version` `3.1:0.1.0`, ETL `MEDS_transforms` 0.6.2, MEDS 0.4.1 |
+| Task | `mortality/in_icu/first_24h`, `sha256:7925b00c16d2496f8a4c25068814a5fe6ad6904436eaa2f1a23c1f699727a2a2` |
+| MIMIC-IV predicates | `sha256:f51853db0b44b216f81255a475893197018b569fec5fcc17e5505ffdbd5b301d` — located and asserted present by the test, **not consumed by any command** |
+| Command | `uv run pytest -m real_data -rs` |
+
+### Empty-history keys — read before any other number
+
+A key whose subject has no qualifying event is scored at the learned intercept rather than excluded. On
+this cohort that population is **empty**:
+
+| Split | Keys | Positives | Subjects | **Empty-history keys** | Visits/key mean | p50 | p90 | max |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| train | 60 | 8 | 47 | **0 (0.00%)** | 27.17 | 9 | 82 | 219 |
+| tuning | 8 | 1 | 5 | **0 (0.00%)** | 10.50 | 10 | 18 | 22 |
+| held_out | 6 | 0 | 4 | **0 (0.00%)** | 8.83 | 7 | 16 | 18 |
+
+No prediction on this cohort is uninformed, so no metric is diluted by intercept-only scores. This differs
+from the synthetic fixture (10.0% / 7.7% / 7.7%), where the degenerate cohort was planted deliberately: the
+task triggers on ICU admission, and every ICU patient in this extract has prior recorded events. The
+guarantee still holds and is still what keeps key coverage exact; it simply has nothing to do here.
+
+### Visit-count distribution — the evidence behind the 1-day granularity decision
+
+With `visit_bucket_minutes = 1440` the training split averages **27.17 visits per key** (median 9, p90 82,
+max 219). Daily bucketing therefore yields a genuinely multi-visit sequence on real data rather than the
+one-or-two-visit degenerate case that motivated the original question, and the long tail is exactly the
+prior EHR history that the operator's rationale — keeping the EHR-versus-ICU importance distinction
+visible — depends on. The decision to keep the 1-day default is supported by this measurement.
+
+### Cohort scale and what it cannot support
+
+The demo cohort is 100 subjects and 1,022,555 events, yielding **74 task keys with 9 positives**. The
+evaluation split is **6 keys with 0 positives**, so AUC is undefined on `held_out` and the tuning split
+carries a single positive. **This gate produces no performance result and none is claimed.** Its purpose,
+per the implementation guide, is to expose pipeline, resource, serialisation and key-coverage failures at
+real-data scale, which it did.
+
+### Preprocessing on real data
+
+| Quantity | Value |
+|---|---|
+| Events read | 1,022,555 |
+| Static events excluded (`time = null`) | 100 |
+| Out-of-vocabulary events dropped | 1,003 (0.107%) |
+| Events retained | 938,659 |
+| `(subject, time)` event groups | 96,783 |
+| Distinct codes in dataset / vocabulary learned from train split | 7,523 / **7,087** |
+
+The vocabulary binds to real MIMIC-IV MEDS codes across every clinical family — 2,300 `LAB`, 2,262
+`MEDICATION`, 1,350 `DIAGNOSIS`, 457 `PROCEDURE`, 237 `DRG`, 157 `INFUSION_START`/`INFUSION_END`, plus
+transfer, fluid-output and admission codes — at 9.18 codes per event group. This was checked rather than
+assumed: a vocabulary that parsed but bound nothing would have produced the same exit status.
+
+### Key coverage
+
+6 requested `held_out` keys, 6 written, **0 missing, 0 extra**, keys unique, aligned by
+`meds_evaluation.PredictionSchema`. Compared as key *sets*, not counts.
+
+### Interpretability on real codes
+
+Eq. (5) contributions were produced for every scored key. At smoke size (3 epochs) attention is
+near-uniform — for an 18-visit patient, `alpha` 0.0551-0.0556 against a uniform 0.0556 — i.e. structurally
+correct but not yet informative. Re-run at the official hyper-parameters (10 epochs) the same patient's
+attention differentiates to `alpha = 0.0813`, about 1.46x uniform, with the largest contributions on
+creatinine and chemistry panel codes. The mechanism works on real data; the magnitude is a function of how
+long the model trained.
+
+### Measurements
+
+Both configurations were run on the same demo cohort. The smoke row is what the gate command executes; the
+official row is the more useful basis for a full-data resource request.
+
+| Configuration / command | Wall s | Peak tree PSS | Peak tree RSS | GPU allocated |
+|---|---:|---:|---:|---:|
+| smoke, `preprocess_data` | 0.20 | 1,140,069,376 | 1,143,742,464 | null (CPU stage) |
+| smoke, `supervised_train` | 1.56 | 2,017,481,728 | 2,021,154,816 | 79,652,864 |
+| smoke, `predict` | 0.11 | 2,076,791,808 | 2,080,464,896 | 76,577,280 |
+| official defaults, `preprocess_data` | 0.22 | 598,925,312 | 602,435,584 | null (CPU stage) |
+| official defaults, `supervised_train` (10 epochs, 1,122,050 parameters) | 1.57 | 1,965,470,720 | 1,969,143,808 | 178,265,600 |
+| official defaults, `predict` | 0.11 | 2,024,526,848 | 2,028,199,936 | 85,279,232 |
+
+Tokenising a million events takes 0.22 s and training the official architecture on this cohort takes 1.57 s,
+so the demo is nowhere near a resource boundary. The resident floor of roughly 2 GB on the GPU stages is the
+CUDA context and PyTorch runtime, not the model.
+
+### Determinism on the real cohort
+
+Environment verified clean first — no `CUBLAS_WORKSPACE_CONFIG`, no `CUDNN_DETERMINISTIC`, nothing set at
+import — so these are default non-deterministic kernels. Three trials per device at the official
+hyper-parameters: **CPU 0/3 pairs diverged, CUDA 0/3 pairs diverged, worst `0.000e+00`**. The CPU result is
+the load-bearing one; the CUDA figure is context about this hardware at this regime (GB10, 74 keys, 10
+epochs, embed 128) and is not a claim of GPU bit-reproducibility.
+
+### A defect found in the shared scaffold, not in this model
+
+The first demo attempt failed after roughly eight minutes. `meds-dev-dataset` built the demo successfully
+and `meds-dev-task` then exited 127 with `aces-cli: not found` and `expand_shards: not found`.
+
+Cause, verified at the pinned ref rather than inferred: MEDS-DEV's `tasks/__main__.py` shells out to
+`aces-cli` through `run_in_env(..., run_as_script=False)` **without passing `env`**, so the child inherits
+this process's environment; invoking `.venv/bin/meds-dev-task` by absolute path never activates that
+virtualenv, so its console scripts are absent from `PATH`. The dataset call site is *not* affected —
+`datasets/__main__.py` wraps its build in `temp_env` and passes `env=env`, and `temp_env` prepends the
+dataset venv's `bin` whenever the dataset ships a `requirements.txt`, which MIMIC-IV does.
+
+Fixed in the model-owned `tests/e2e.py::prepare_mimic_demo` by passing `PATH` to the **task** invocation
+only. Deliberately not applied to the dataset invocation: it would be harmless, since MEDS-DEV prepends its
+own venv over anything passed, but it would encode a defect that does not exist. `tests/integration.py`
+needed no change and remains byte-identical at
+`sha256:cb5a2eccbafe8cb9f0c2c2329bd56c165596a54d3d2099cd9eb95d1c7753ed58`.
+
 ## Review gates
 
 | Gate | Evidence reviewed | Reviewer/approval | Date or reference |
 |---|---|---|---|
-| Before MIMIC-IV demo | Source fidelity, local/MEDS-DEV results, predicate-free confirmation, demo plan | **Requested, not yet granted** | Checkpoint comment on issue #3, https://github.com/florian6973/meds-models/issues/3 |
-| Before full MIMIC-IV | Demo result, cohort/key coverage, measurements, full-run resources | Not requested; blocked on the gate above | -- |
+| Before MIMIC-IV demo | Source fidelity, local/MEDS-DEV results, predicate-free confirmation, demo plan | **Approved** by the repository owner (`florian6973`), naming the gate and commit `ae298931d3b267de94ba353f5921b74000151ca6` | https://github.com/florian6973/meds-models/issues/3#issuecomment-5307590080, 2026-08-16 |
+| Before full MIMIC-IV | Demo result, cohort/key coverage, measurements, full-run resources | **Requested, not yet granted** | Demo-evidence comment on issue #3 |
 
 ## Resource measurements
 
@@ -265,10 +386,14 @@ epochs, and 9% of its keys are scored at the intercept. The validation AUC recor
   revision; the working tree is committed and clean at that SHA on branch `model/01_19_retain`.
 - Dataset/task identifiers: local gate uses the synthetic fixture in `tests/fixtures.py` (deterministic,
   seed 19, no real patient data). MEDS-DEV gate uses the same fixture through `dataset_name=retain-fixture`
-  and `task_name=mortality_fixture`.
+  and `task_name=mortality_fixture`. The demo gate uses the MEDS-DEV MIMIC-IV demo
+  (`dataset_version` `3.1:0.1.0`) with `mortality/in_icu/first_24h`; see *MIMIC-IV demo gate* above.
 - Dataset, task, and predicate revisions: MEDS-DEV pinned at
   `0c21a2226964181dee7ed28c9aa5aa0abdfe9765` by `tests/integration.py`. No predicates file is consumed by
-  any command. The MIMIC-IV demo would use MEDS-DEV's `mortality/in_icu/first_24h` at that same revision.
+  any command; MEDS-DEV's MIMIC-IV `predicates.yaml`
+  (`sha256:f51853db0b44b216f81255a475893197018b569fec5fcc17e5505ffdbd5b301d`) is located and asserted
+  present by the demo test but read by nothing. Task
+  `sha256:7925b00c16d2496f8a4c25068814a5fe6ad6904436eaa2f1a23c1f699727a2a2`.
 - Full-data task-selection repository commit: not accessed. The bundle at `$FULL_MIMIC_WORK_DIR` has not
   been read and will not be before the full-run approval gate.
 - Shared task-bundle identifier/path: not accessed.
@@ -289,12 +414,18 @@ epochs, and 9% of its keys are scored at the intercept. The validation AUC recor
    can be revisited with evidence rather than by assertion.
 2. **Empty-history keys are scored at the intercept.** This is deliberate, so that key coverage is exact
    and no exclusion policy is needed, but any metric computed over those keys is measuring the base rate.
-   The count is reported per split at every gate.
+   The count is reported per split at every gate. On the MIMIC-IV demo cohort the population is empty
+   (0.00% in all three splits), because the task triggers on ICU admission and every such subject has
+   prior events; it remains a real risk for a task that can trigger at a subject's first record.
 3. **The closed vocabulary silently drops codes unseen in training.** The count is recorded
    (`out_of_vocabulary_events`), but a held-out cohort with substantially different coding practice would
    lose signal without failing anything.
-4. **No performance result exists yet.** Only the synthetic fixture has been run. The demo gate is not a
-   scientific result either, by the implementation guide's own instruction.
+4. **No performance result exists.** The demo cohort yields 74 task keys with 9 positives, and its
+   evaluation split is 6 keys with **0 positives**, so AUC is undefined there and the tuning split carries
+   a single positive. The demo is a pipeline, resource and key-coverage test, which is what the
+   implementation guide asks of it; it is not a scientific result and none is claimed from it. The
+   validation AUC of 1.0 recorded in the official-hyper-parameter manifest is computed over 8 rows with one
+   positive and means nothing beyond "the selection path executed".
 5. **The paper's appendices were not available** in the arXiv record used. Hyper-parameter defaults come
    from the official code, which is authoritative for those values, but the appendix's tuning ranges could
    not be cross-checked.
@@ -327,22 +458,50 @@ epochs, and 9% of its keys are scored at the intercept. The validation AUC recor
    *How far the CUDA exactness observation extends.* It was measured at every scale reachable without real
    data and held at all of them:
 
-   | Configuration | CPU | CUDA |
-   |---|---|---|
-   | smoke: embed 16, hidden 16, batch 8, 3 epochs, 66 keys | `0.000e+00` | `0.000e+00` |
-   | official defaults: embed 128, hidden 128, batch 100, 10 epochs | `0.000e+00` | `0.000e+00` |
-   | wide: embed 256, hidden 256, batch 16, 20 epochs | `0.000e+00` | `0.000e+00` |
-   | 1,637 keys from 1,500 subjects, official defaults | `0.000e+00` | `0.000e+00` |
+   Each row below states its trial count and divergence fraction; single-trial cells are not
+   measurements and are not reported as such. Every run was made with a verified-clean environment (no
+   `CUBLAS_WORKSPACE_CONFIG`, no `use_deterministic_algorithms`, nothing set at import), so these are
+   default non-deterministic kernels rather than a suppressed baseline.
 
-   The last row is the one that matters for the atomics question: many rows reducing into a small
-   vocabulary is the worst case for collision in `embedding_bag` backward, and it still reproduced
-   exactly. Even so, **the CUDA test asserts a tolerance of `1e-5` rather than equality.** Exactness on an
+   | Configuration | Trials | CUDA diverged | CPU diverged | Worst |
+   |---|---:|---:|---:|---|
+   | smoke: embed 16, hidden 16, batch 8, 3 epochs, 66 keys | 5 | 0/10 pairs | 0/10 pairs | `0.000e+00` |
+   | 219 keys / 200 subjects, official defaults, 8 epochs | 5 | 0/10 pairs | 0/10 pairs | `0.000e+00` |
+   | 1,637 keys / 1,500 subjects, official defaults, 25 epochs | 5 | 0/10 pairs | 0/10 pairs | `0.000e+00` |
+   | **MIMIC-IV demo cohort, official defaults, 10 epochs** | 3 | 0/3 pairs | 0/3 pairs | `0.000e+00` |
+   | single-trial sweep: widths 16-256, epochs 3-50, 66-1,637 keys (10 configurations) | 1 each | 0/10 | 0/10 | `0.000e+00` |
+
+   Pooling the multi-trial conditions gives 12 independent comparisons with zero divergences. That
+   **excludes a divergence rate comparable to the sibling ports** (`P(0/12 | rate 2/3) = 1.9e-06`) but
+   leaves the 95% upper bound on a rare divergence at **22%** — a 5% rate would still produce this result
+   54% of the time. The defensible claim is therefore *"RETAIN does not diverge at a rate comparable to
+   the sibling ports at the conditions reachable here"*, **not** *"RETAIN is deterministic on CUDA"*.
+
+   The 1,637-key row bears on the atomics question specifically: many rows reducing into a small
+   vocabulary is the worst case for collision in `embedding_bag` backward, whose backward is an index-add
+   over repeated indices. It still reproduced exactly, which makes this port a counter-case to the rule
+   that a scatter/index-add backward implies nondeterminism. One possible explanation — that PyTorch uses
+   a sort-based deterministic path there rather than raw atomics — is a **hypothesis that has not been
+   verified here** and should be checked against the kernel rather than inferred from this result.
+
+   Even so, **the CUDA test asserts a tolerance of `1e-5` rather than equality.** Exactness on an
    accelerator is a property of the kernels a model happens to use and the scale it runs at, not a
    guarantee: a sibling port measured a one-ULP (`5.96e-08`) disagreement in its own kernels under the
    same control. Asserting equality would promise something the hardware does not and would become an
    intermittent failure at full-data scale, where the first red run would be misread as a defect. The
-   threshold sits three orders of magnitude above a ULP and three below the smallest real determinism
-   defect observed in this project (`9.19e-04`, limitation 9), so it separates the two cleanly.
+   threshold sits well above a ULP and below the smallest real determinism defect observed in this port
+   (`9.19e-04`, limitation 9).
+
+   **This threshold must not be copied to another port.** It was proposed as a shared constant and that
+   proposal is withdrawn: a sibling measured `1.836e-05` of genuine same-device CUDA noise, which `1e-5`
+   would flag as a defect, and another measured `6.5e-3` cross-device at its published architecture. The
+   generalisable rule is not a number: *a tolerance must be justified by that port's own worst measured
+   divergence and must state the regime — architecture, epochs, cohort size — it was measured in.*
+   More seriously, across the fleet the noise and defect populations **overlap**: a sibling's worst
+   hardware noise (`3.937e-03`) exceeds the smallest real defect found in this project (`9.19e-04`) by
+   4.3x. For a port in that regime no threshold separates them at all. **The CPU exact-equality control
+   is the only determinism test here that carries a guarantee, and a passing CUDA tolerance is not
+   evidence that a pipeline is deterministic.**
 
    The benchmark-design consequence, which applies whether or not this port's kernels stay exact:
    **a GPU run cannot be assumed reproducible bit-for-bit from its recorded seed alone, so cross-run and
@@ -357,3 +516,10 @@ epochs, and 9% of its keys are scored at the intercept. The validation AUC recor
    measurement now reads 0. Note that rebuilding a fixture twice does *not* detect this — a fixture that
    writes canonically reproduces its own layout and the check passes while the defect remains — so the
    regression test permutes row order directly.
+10. **The demo cohort cannot validate the full-data resource envelope.** Tokenising 1.02M events took
+    0.22 s and training the official architecture took 1.57 s, three orders of magnitude below a full
+    MIMIC-IV extract. The demo establishes that the pipeline works at real-data *shape* — 7,087 codes, 219
+    visits on the longest history, a million events — not at full-data *scale*. Vocabulary size and the
+    visit-count tail are the two quantities that will grow, and `max_visits` and `max_vocab_size` exist to
+    bound them; neither is set at present. A resource estimate for the full run should be derived from a
+    scaling measurement, not extrapolated from these numbers.

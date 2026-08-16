@@ -148,6 +148,18 @@ def prepare_mimic_demo(meds_dev, tmp_path):
 
     Use ``MEDS_DEMO_DIR`` when set; otherwise invoke MEDS-DEV's own demo builder. Pin an existing
     demo-compatible MEDS-DEV task rather than defining a task in this repository.
+
+    The task invocation puts MEDS-DEV's virtualenv ``bin`` on ``PATH``; the dataset invocation must not,
+    and does not. Verified at the pinned ref rather than assumed: ``datasets/__main__.py`` wraps its build
+    in ``temp_env`` and passes ``env=env``, and ``temp_env`` prepends the dataset venv's ``bin`` to
+    ``PATH`` whenever the dataset ships a ``requirements.txt`` -- MIMIC-IV does -- so that call site
+    resolves its own scripts. ``tasks/__main__.py`` passes no ``env`` at all, so its ``run_in_env`` falls
+    back to ``os.environ`` and its ``aces-cli`` / ``expand_shards`` subprocesses are not found, because
+    running ``.venv/bin/meds-dev-task`` by absolute path never activates that virtualenv. Without this the
+    dataset builds successfully and the task step then fails with exit 127, several minutes in.
+
+    Patching the dataset call too would be harmless -- MEDS-DEV prepends its own venv over anything passed
+    -- but it would encode a defect that does not exist, so it is deliberately not done here.
     """
     from .integration import RUN_TIMEOUT, run, venv_bin
 
@@ -173,6 +185,8 @@ def prepare_mimic_demo(meds_dev, tmp_path):
             f"output_dir={labels_dir}",
         ],
         timeout=RUN_TIMEOUT,
+        # `run()` merges this over os.environ, so nothing else about the environment is disturbed.
+        env={"PATH": f"{venv_bin(meds_dev)}{os.pathsep}{os.environ['PATH']}"},
     )
     predicates_file = meds_dev / "src" / "MEDS_DEV" / "datasets" / "MIMIC-IV" / "predicates.yaml"
     return dataset_dir, labels_dir, predicates_file
