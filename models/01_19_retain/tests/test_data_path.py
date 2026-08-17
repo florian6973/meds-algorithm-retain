@@ -263,3 +263,29 @@ def test_the_marker_exclusion_can_be_turned_off(tmp_path):
     dataset = _write_dataset(tmp_path / "meds", rows, SPLITS)
     preprocess(dataset, _staged(tmp_path / "data"), RetainConfig(exclude_meds_standard_markers=False))
     assert "MEDS_BIRTH" in PatientStore(tmp_path / "data").code_strings()
+
+
+def test_a_task_anchored_on_a_subjects_first_event_is_not_empty_by_default(store):
+    """The inclusive boundary is what keeps a first-event-anchored task from being all-empty.
+
+    Measured on the MIMIC-IV demo cohort: with a prediction time exactly at each subject's first modelled
+    event, the default `<=` boundary gives 0/100 empty histories and the strict `<` boundary gives
+    **100/100**. Empty history otherwise occurs only for a prediction time preceding the subject's entire
+    modelled record.
+
+    This matters beyond the demo. The MIMIC-IV demo task anchors on ICU admission, which guarantees prior
+    history; a task of the form "does code X occur within N days" carries no such anchor, and if it
+    triggers on a subject's first record the strict cutoff would send every one of those keys to the
+    learned intercept. The strict setting looks like the conservative choice and is the dangerous one
+    here, so this pins the direction.
+    """
+    patients, _ = store
+    first_event = datetime(2020, 1, 1, 1)  # subject 1's earliest event in ROWS
+    inclusive = build_sequences(patients, _keys(1, first_event), RetainConfig())
+    assert inclusive.n_empty == 0
+    assert inclusive.lengths.tolist() == [1]
+
+    strict = build_sequences(
+        patients, _keys(1, first_event), RetainConfig(include_events_at_prediction_time=False)
+    )
+    assert strict.n_empty == 1, "the strict boundary empties a first-event-anchored key"

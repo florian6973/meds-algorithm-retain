@@ -311,6 +311,31 @@ from the synthetic fixture (10.0% / 7.7% / 7.7%), where the degenerate cohort wa
 task triggers on ICU admission, and every ICU patient in this extract has prior recorded events. The
 guarantee still holds and is still what keeps key coverage exact; it simply has nothing to do here.
 
+**That 0.00% is a property of the ICU trigger and does not transfer.** The full-data registry is made of
+`"does code X occur within N days"` tasks with no ICU anchor, so nothing in those definitions guarantees
+prior history the way this one does. Measured on the same demo cohort, varying only where the prediction
+time falls relative to each subject's first *modelled* event (post marker-exclusion; the median modelled
+record spans 256 days):
+
+| Prediction time | Empty history, `<=` (default) | Empty history, `<` (strict) |
+|---|---:|---:|
+| = subject's first modelled event | **0/100 (0.0%)** | **100/100 (100.0%)** |
+| 1 second after the first modelled event | 0/100 | 0/100 |
+| uniform random point within the record | 0/100 | 0/100 |
+| midpoint of the record | 0/100 | 0/100 |
+| 1 day before the first modelled event | 100/100 | 100/100 |
+
+Two conclusions. Empty history arises **only** for a prediction time preceding a subject's entire modelled
+record, so an anchor-free task is safe as long as its trigger is some event of the subject. And the
+`include_events_at_prediction_time` default is what makes that true: at a first-event-anchored trigger the
+inclusive boundary yields 0% and the strict boundary yields **100%**. The strict setting reads as the
+conservative one and is the dangerous one for this class of task. Pinned by
+`tests/test_data_path.py::test_a_task_anchored_on_a_subjects_first_event_is_not_empty_by_default` so the
+default cannot be flipped for apparent safety without that test failing.
+
+The intercept fallback itself remains **unexercised on real data**: it is covered by unit tests and by the
+synthetic fixture, and the demo produced no key that needed it.
+
 ### Visit-count distribution — the evidence behind the 1-day granularity decision
 
 With `visit_bucket_minutes = 1440` the training split averages **26.17 visits per key** (median 8, max 218),
@@ -581,11 +606,15 @@ epochs, and 9% of its keys are scored at the intercept. The validation AUC recor
    the sequence length comes from prior history rather than from the stay itself. `visit_bucket_minutes=60`
    or `0` are one argument away, and the visit-count distribution is reported at every gate so the choice
    can be revisited with evidence rather than by assertion.
-2. **Empty-history keys are scored at the intercept.** This is deliberate, so that key coverage is exact
-   and no exclusion policy is needed, but any metric computed over those keys is measuring the base rate.
-   The count is reported per split at every gate. On the MIMIC-IV demo cohort the population is empty
-   (0.00% in all three splits), because the task triggers on ICU admission and every such subject has
-   prior events; it remains a real risk for a task that can trigger at a subject's first record.
+2. **Empty-history keys are scored at the intercept, and that path is unexercised on real data.** The
+   policy is deliberate, so that key coverage is exact and no exclusion policy is needed, but any metric
+   computed over those keys measures the base rate. On the MIMIC-IV demo the population is empty (0.00% in
+   all three splits) **because the task anchors on ICU admission** — a property of that task, not of this
+   port. The full-data registry has no such anchor. Measurement above shows empty history arises only for
+   a prediction time preceding a subject's entire modelled record, and that the inclusive
+   prediction-time boundary is what keeps a first-event-anchored trigger at 0% rather than 100%. The
+   fallback is covered by unit tests and by the synthetic fixture only; the first real-data exercise of it
+   would be a full-data run, and the per-split count must be read before any metric from such a run.
 3. **The closed vocabulary silently drops codes unseen in training.** The count is recorded
    (`out_of_vocabulary_events`), but a held-out cohort with substantially different coding practice would
    lose signal without failing anything.
