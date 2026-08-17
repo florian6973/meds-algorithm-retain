@@ -786,6 +786,28 @@ Writing to a file and reading `$?` has no positional dependency to get wrong, wh
 used: this class of error has recurred through the pilot despite being documented, so the durable fix is a
 mechanical form rather than a rule to remember at the moment of writing.
 
+### Which of this port's guards are proxies, and which way each can be wrong
+
+Running the conditional audit against the *predicates* rather than the prose — the lesson from the
+defective trigger above — makes a distinction worth stating: **a proxy that can pass while its condition
+is false is dangerous; a proxy that can only fail while its condition is true is merely brittle.** The
+defective trigger was the first kind. Classifying the rest of this port's file-reading assertions:
+
+| Assertion | Kind | Backed by |
+|---|---|---|
+| allowlist parsed from `github-sync.sh`'s `git add` line | fails safe — a format change breaks parsing loudly | real `git add` staging test |
+| `config.sh` contains the anchored `RUN_ROOT` and the dataset arguments | fails safe — reformatting fails it | dry-run from another working directory |
+| publisher root and `RUN_ROOT` default name the same path | fails safe — a regex miss asserts explicitly | resolved-path equality against the publisher |
+| **no `ln -s` in `github-sync.sh`** | **can pass while false** (`cp -s`, `rsync -l`) | the index-mode assertion, which is behavioural |
+| **relaxation trigger: resolves `RUN_ROOT` and dereferences on copy** | **can pass while false** | **nothing — see below** |
+
+Four of five are either fail-safe or backed by a behavioural test. The relaxation trigger is the one that
+cannot be backed behaviourally **here**, because the publisher it describes does not exist in this port
+yet: there is nothing to run. That is the honest limit of encoding a condition as an assertion. Two things
+reduce it rather than remove it — the predicate is a conjunction rather than a proxy for one, and tripping
+it produces a *demand that a human relax the guard*, carrying the full analysis in the failure message,
+rather than relaxing anything automatically.
+
 ### A known flaky test that must not be re-run until green
 
 `tests/test_operations.py::test_slurm_dry_run_is_non_mutating` snapshots `ROOT.rglob("*")` before and
