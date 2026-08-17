@@ -539,6 +539,32 @@ few, very large shards, the mitigation is re-sharding the input, not more RAM.
   task is unknown. `train` cost is close to linear in keys over the measured range (296 -> 4,736 keys is
   16x rows for 8.5x time), so this is the quantity that should drive the time request.
 
+## Cluster operability
+
+Changes made against a SLURM brief from another port on this cluster, each checked against this port
+rather than adopted wholesale:
+
+- **`supervised_train` now prints one line per epoch to stderr** — epoch, train loss, validation AUC, best
+  epoch, epochs since best, optimiser steps. The loop was previously silent. Because each command writes
+  its artifact and manifest only on completion, a multi-hour fit offered nothing to inspect from outside
+  and a healthy run was indistinguishable from a hung one. This also makes per-epoch cost readable from a
+  job log in the first minutes of a run, which is what a GPU time limit has to be sized against.
+- **Every `slurm/config.sh` setting is `${VAR:-default}`**, so a cluster with different partition names or
+  limits can override from the environment without a commit. `submit.sh` and `job.sbatch` are
+  template-owned and unmodified.
+- **`slurm-*.out` / `slurm-*.err` are gitignored.** Nothing sets `--output`, so SLURM writes job logs into
+  the submit working directory, which is this worktree, and raw logs must not be committed.
+- **The PATH requirement is documented in `config.sh`.** Both `submit.sh` and `job.sbatch` call
+  `meds-model` by bare name; without the virtualenv on PATH, `submit.sh` prints "No commands declared" on
+  the login node — observed directly here while testing `--dry-run`. Since `--export=ALL` is passed,
+  submit-time PATH is what the compute node inherits, so a submission made without it queues and then
+  fails after the wait.
+
+One point from that brief needed no change: the vocabulary is built from the **data shards**, never from
+`metadata/codes.parquet`. That is not a reaction to any report about that file's contents but a structural
+choice — a metadata sidecar may enumerate more, fewer, or different codes than the events contain, so the
+events are the authority. This port contains no reference to that file.
+
 ## Review gates
 
 | Gate | Evidence reviewed | Reviewer/approval | Date or reference |

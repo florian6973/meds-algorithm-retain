@@ -1,12 +1,26 @@
 #!/usr/bin/env bash
-# Model-owned cluster settings. This file is the only SLURM file expected to need routine edits.
-PARTITION_CPU="cpu"
-PARTITION_GPU="gpu"
-TIME_CPU="04:00:00"
-TIME_GPU="12:00:00"
-CPUS="8"
-MEMORY="64G"
-GPUS="1"
+# Model-owned cluster settings. This file is the only SLURM file expected to need routine edits;
+# submit.sh and job.sbatch are template-owned. Every setting below is ${VAR:-default}, so a cluster can
+# override it from the environment without a commit.
+#
+# BEFORE RUNNING submit.sh: put the virtualenv on PATH.
+#   export PATH="$PWD/.venv/bin:$PATH"; meds-model commands   # must list the three commands
+# Both submit.sh and job.sbatch invoke `meds-model` by bare name. Without it, submit.sh prints
+# "No commands declared" and exits on the login node -- observed directly while testing --dry-run here.
+# submit.sh passes --export=ALL, so submit-time PATH is what the compute node gets: a submission made
+# without it queues successfully and then fails the same way after the wait.
+#
+# TIME_GPU must exceed n_epochs x per-epoch wall time. supervised_train now prints one line per epoch to
+# stderr, so the per-epoch cost is readable from the job log within the first few minutes of a run rather
+# than estimated. Measured here at 64x the MIMIC-IV demo (65.4M events, 4,736 keys): 5.6s for 10 epochs
+# at the official architecture. Do not carry another model's per-epoch figure over to this one.
+PARTITION_CPU="${PARTITION_CPU:-cpu}"
+PARTITION_GPU="${PARTITION_GPU:-gpu}"
+TIME_CPU="${TIME_CPU:-04:00:00}"
+TIME_GPU="${TIME_GPU:-12:00:00}"
+CPUS="${CPUS:-8}"
+MEMORY="${MEMORY:-64G}"
+GPUS="${GPUS:-1}"
 RUN_ROOT="${RUN_ROOT:-runs}"
 
 # Tokenising a full MEDS extract is a streaming pass over every shard, so `preprocess_data` is the CPU

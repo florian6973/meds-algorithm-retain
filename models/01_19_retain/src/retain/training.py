@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import random
+import sys
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -283,10 +284,29 @@ def train(
         if validation_batch.n_keys:
             auc = roc_auc(validation_labels, score(model, validation_batch, config, device))
         history.validation_aucs.append(auc)
-        if auc is not None and (history.best_validation_auc is None or auc > history.best_validation_auc):
+        improved = auc is not None and (
+            history.best_validation_auc is None or auc > history.best_validation_auc
+        )
+        if improved:
             history.best_validation_auc = auc
             history.best_epoch = epoch
             best_state = copy.deepcopy(model.state_dict())
+
+        # Emitted every epoch, unconditionally, to stderr. A full-data fit runs for hours and this
+        # command writes its artifact and manifest only at the very end, so without this line a healthy
+        # run and a hung one are indistinguishable from outside and there is nothing on disk to inspect
+        # mid-run. `epochs_since_best` is the quantity that says whether the fit is still going anywhere.
+        print(
+            f"[retain] epoch {epoch + 1}/{config.n_epochs} "
+            f"train_loss={history.train_losses[-1]:.6f} "
+            f"validation_auc={'n/a' if auc is None else f'{auc:.6f}'} "
+            f"best_epoch={history.best_epoch + 1} "
+            f"epochs_since_best={epoch - history.best_epoch} "
+            f"steps={history.optimizer_steps}"
+            f"{' *' if improved else ''}",
+            file=sys.stderr,
+            flush=True,
+        )
 
     if history.best_validation_auc is None:
         # No usable validation signal: either no tuning rows, or one class only. Upstream would have

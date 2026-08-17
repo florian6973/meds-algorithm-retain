@@ -5,3 +5,7 @@ __pycache__/
 runs/*/logs/
 runs/*/artifacts/
 runs/*/checkpoints/
+# SLURM writes slurm-<jobid>.out into the submit CWD, which is this worktree.
+# Raw job logs must never be committed.
+slurm-*.out
+slurm-*.err
