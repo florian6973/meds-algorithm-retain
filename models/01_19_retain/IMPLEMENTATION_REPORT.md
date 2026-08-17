@@ -554,6 +554,17 @@ rather than adopted wholesale:
   template-owned and unmodified.
 - **`slurm-*.out` / `slurm-*.err` are gitignored.** Nothing sets `--output`, so SLURM writes job logs into
   the submit working directory, which is this worktree, and raw logs must not be committed.
+- **Run output is excluded deny-by-default rather than by enumeration.** `RUN_ROOT` defaults to the
+  relative path `runs` and `scripts/github-sync.sh` publishes from `runs/<id>/` by design, so the run
+  directory cannot be excluded wholesale; the ignore rules are therefore load-bearing. The previous
+  patterns named `logs/`, `artifacts/` and `checkpoints/` and left **`runs/<id>/command-args/` trackable**
+  — written on every real submit, and containing this model's `external_meds_dir` and
+  `external_labels_dir`, so a default-configured submit followed by `git add -A` would have committed the
+  dataset and task paths of a real run. Now `runs/**` is excluded with an allowlist of exactly the three
+  things `github-sync.sh` stages, so anything added under `runs/` later arrives ignored until it is named
+  deliberately. `tests/test_run_output_is_not_committable.py` asserts both directions and derives the
+  allowlist from the sync script itself so the two cannot drift; verified by mutation that a blanket
+  `runs/` ignore fails the publication direction rather than passing quietly.
 - **The PATH requirement is documented in `config.sh`.** Both `submit.sh` and `job.sbatch` call
   `meds-model` by bare name; without the virtualenv on PATH, `submit.sh` prints "No commands declared" on
   the login node — observed directly here while testing `--dry-run`. Since `--export=ALL` is passed,
@@ -564,6 +575,19 @@ One point from that brief needed no change: the vocabulary is built from the **d
 `metadata/codes.parquet`. That is not a reaction to any report about that file's contents but a structural
 choice — a metadata sidecar may enumerate more, fewer, or different codes than the events contain, so the
 events are the authority. This port contains no reference to that file.
+
+### A known flaky test that must not be re-run until green
+
+`tests/test_operations.py::test_slurm_dry_run_is_non_mutating` snapshots `ROOT.rglob("*")` before and
+after, and `ROOT` contains `runs/`. A concurrent job writing run output there changes the snapshot and
+fails the test. It is template-owned and shared across the fleet, so it is deliberately **not** modified
+here.
+
+Recorded because the failure mode is the response rather than the test: a port that flakes, re-runs and
+sees green learns "re-run until green", which is precisely how a real intermittent failure gets buried.
+This is the same lesson as the CUDA determinism work in limitation 8, where a single passing run was shown
+to be one sample rather than a measurement. If this test fails, check for a concurrent run under `runs/`
+before re-running it, and record that as the cause rather than the green retry.
 
 ## Review gates
 

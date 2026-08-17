@@ -2,9 +2,22 @@ __pycache__/
 .pytest_cache/
 .venv/
 *.egg-info/
-runs/*/logs/
-runs/*/artifacts/
-runs/*/checkpoints/
+
+# Run output lives inside the checkout: slurm/config.sh defaults RUN_ROOT to the relative path `runs`,
+# and scripts/github-sync.sh publishes from `runs/<id>/` by design. So this is deny-by-default with an
+# allowlist of exactly what that script commits, rather than a list of known-bad subdirectories.
+#
+# Enumerating what to exclude is what left `command-args/` trackable: submit.sh writes
+# `runs/<id>/command-args/<command>.args` on every real submit, and this model's stage_args puts
+# `external_meds_dir` and `external_labels_dir` in them -- the dataset and task paths of a real run.
+# Anything added under runs/ in future is excluded until it is named here deliberately.
+runs/**
+!runs/*/
+!runs/*/spec.yaml
+!runs/*/result.yaml
+!runs/*/manifests/
+!runs/*/manifests/**
+
 # SLURM writes slurm-<jobid>.out into the submit CWD, which is this worktree.
 # Raw job logs must never be committed.
 slurm-*.out
