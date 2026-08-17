@@ -297,9 +297,11 @@ this cohort that population is **empty**:
 
 | Split | Keys | Positives | Subjects | **Empty-history keys** | Visits/key mean | p50 | p90 | max |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| train | 60 | 8 | 47 | **0 (0.00%)** | 26.17 | 8 | -- | 218 |
-| tuning | 8 | 1 | 5 | **0 (0.00%)** | 9.50 | 9 | -- | 21 |
-| held_out | 6 | 0 | 4 | **0 (0.00%)** | 7.83 | 6 | -- | 17 |
+| train | 60 | 8 | 47 | **0 (0.00%)** | 26.17 | 8 | 81 | 218 |
+| tuning | 8 | 1 | 5 | **0 (0.00%)** | 9.50 | 9 | 17 | 21 |
+| held_out | 6 | 0 | 4 | **0 (0.00%)** | 7.83 | 6 | 15 | 17 |
+
+Median prior-record span per split: train 151 days, tuning 11, held_out 13.
 
 Measured after the `MEDS_BIRTH` exclusion described below. Before it, every row carried one extra visit
 (27.17 / 10.50 / 8.83) and the median history span read 23,311 days rather than 151.
@@ -316,6 +318,30 @@ spanning a median of **151 days** of prior record. Daily bucketing therefore yie
 one-or-two-visit degenerate case that motivated the original question, and the long tail is exactly the
 prior EHR history that the operator's rationale — keeping the EHR-versus-ICU importance distinction
 visible — depends on. The decision to keep the 1-day default is supported by this measurement.
+
+### Cohort funnel: extract to scored row
+
+Every step from the MEDS extract down to a prediction, per split. Recorded here because it was otherwise
+only reproducible by re-running against a demo build that does not survive a temp-directory rotation.
+
+| Stage | train | tuning | held_out | total |
+|---|---:|---:|---:|---:|
+| Subjects in MEDS extract | 80 | 10 | 10 | **100** |
+| Events | 899,463 | 76,169 | 46,923 | **1,022,555** |
+| Subjects with >= 1 ICU admission | 80 | 10 | 10 | 100 |
+| **ICU stays (candidate triggers)** | 113 | 15 | 12 | **140** |
+| ACES gap-window exclusions | -53 | -7 | -6 | **-66** |
+| **Task keys emitted by ACES** | **60** | **8** | **6** | **74** |
+| Distinct subjects among keys | 47 | 5 | 4 | 56 |
+| Positives | 8 | 1 | **0** | **9** |
+| Code incidences fed to the model | 174,069 | 18,918 | 11,055 | 204,042 |
+
+The largest attrition is ACES', not this port's: `mortality/in_icu/first_24h` discards 66 of 140 ICU stays
+because the patient died, was discharged, or was re-admitted inside the 48-hour gap window. The headline
+"100 subjects" is really **56 subjects contributing 74 prediction points**. Subject and key counts diverge
+in both directions -- a subject can contribute several qualifying stays, and one held-out subject
+contributes 3 of the 6 keys -- which is why coverage is checked on the `(subject_id, prediction_time)`
+pair rather than on subject counts.
 
 ### Cohort scale and what it cannot support
 
@@ -334,7 +360,7 @@ real-data scale, which it did.
 | MEDS standard markers excluded (`MEDS_BIRTH`, `MEDS_DEATH`) | 131 |
 | Out-of-vocabulary events dropped | 1,003 (0.107%) |
 | Events retained | 938,528 |
-| `(subject, time)` event groups | 96,783 |
+| `(subject, time)` event groups | 96,666 |
 | Distinct codes in dataset / vocabulary learned from train split | 7,523 / **7,085** |
 
 The vocabulary binds to real MIMIC-IV MEDS codes across every clinical family — 2,300 `LAB`, 2,262
