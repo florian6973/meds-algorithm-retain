@@ -314,6 +314,49 @@ def test_the_publisher_copies_rather_than_links_published_evidence(tmp_path):
         "the symlink hazard this test guards against no longer reproduces; re-derive the guard before "
         "relaxing it"
     )
+    # git records the distinction the ignore rules cannot: a symlink is mode 120000, a real file 100644.
+    modes = _staged_modes(repository)
+    assert modes[f"runs/{RUN_ID}/spec.yaml"] == "120000", modes
+
+
+def _staged_modes(repository: Path) -> dict[str, str]:
+    """`path -> index mode` for everything staged under `runs/`."""
+    listing = subprocess.run(
+        ["git", "ls-files", "-s", "--", "runs/"], cwd=repository, capture_output=True, text=True
+    ).stdout.splitlines()
+    return {line.split("\t", 1)[1]: line.split()[0] for line in listing if line.strip()}
+
+
+def test_nothing_published_is_a_symlink(tmp_path):
+    """Assert the outcome, not the implementation: no staged run file may be a symlink.
+
+    The source tripwire above asserts that today's `github-sync.sh` does not link. This asserts the
+    property that matters regardless of how a link could arrive -- `cp -s`, `rsync -l`, a helper the
+    script shells out to, or a reimplementation of the publisher. Git records the distinction that no
+    `.gitignore` rule can express: mode `120000` for a symlink against `100644` for a real file, so the
+    check is exact rather than heuristic.
+
+    Note that only the symlinked-*file* case needs this. A symlinked *directory* is refused by git itself
+    -- `fatal: ... is beyond a symbolic link`, exit 128 -- so it fails loudly and cannot reach the index.
+    """
+    repository = tmp_path / "checkout"
+    run = repository / "runs" / RUN_ID
+    (run / "manifests").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    (repository / ".gitignore").write_text((ROOT / ".gitignore").read_text())
+    (run / "spec.yaml").write_text("dataset: {}\n")
+    (run / "result.yaml").write_text("status: complete\n")
+    for command in _profile_commands():
+        (run / "manifests" / f"{command}.yaml").write_text("contract_version: '2'\n")
+
+    subprocess.run(["git", "add", *_published_paths()], cwd=repository, check=True, capture_output=True)
+    modes = _staged_modes(repository)
+    assert modes, "nothing staged, so this assertion proves nothing"
+    symlinked = [path for path, mode in modes.items() if mode == "120000"]
+    assert not symlinked, (
+        f"published as symlinks: {symlinked}. A symlink stages with the target path as its blob content, "
+        "so an off-checkout run root would put host paths in the index; publication must copy."
+    )
 
 
 def _dry_run_args_paths(cwd, **env):
@@ -376,4 +419,45 @@ def test_the_anchored_run_root_is_what_the_publisher_resolves():
     assert written_run_dir == publisher_run_dir, (
         f"submit.sh writes the run to {written_run_dir}, but github-sync.sh would publish from "
         f"{publisher_run_dir}; a completed run could not be published"
+    )
+
+
+def test_the_mode_guard_detects_a_link_that_arrived_without_anyone_linking(tmp_path):
+    """The case a source-text tripwire cannot see: `cp -R` carries a symlink through.
+
+    GNU `cp -R` preserves symlinks; only `-L` dereferences them. Measured: copying a `manifests/`
+    directory whose `predict.yaml` is a link into scratch yields a link in the destination, and staging
+    that gives mode `120000` with the host path as blob content, exit 0, no warning. Alongside it a real
+    manifest stages `100644`.
+
+    So a run whose manifest happens to be a link into scratch -- an ordinary cluster arrangement, not a
+    workaround -- leaks without anyone attempting the symlink route, and nothing in `github-sync.sh`'s
+    text is wrong. This asserts the mode check actually discriminates that case, rather than only passing
+    on a clean fixture where it could not fail.
+    """
+    repository = tmp_path / "checkout"
+    run = repository / "runs" / RUN_ID
+    (run / "manifests").mkdir(parents=True)
+    outside = tmp_path / "scratch"
+    outside.mkdir()
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    (repository / ".gitignore").write_text((ROOT / ".gitignore").read_text())
+    (run / "spec.yaml").write_text("dataset: {}\n")
+    (run / "result.yaml").write_text("status: complete\n")
+
+    commands = _profile_commands()
+    (outside / "linked.yaml").write_text("dataset: /groups/example/MIMIC_MEDS\n")
+    (run / "manifests" / f"{commands[0]}.yaml").symlink_to(outside / "linked.yaml")
+    for command in commands[1:]:
+        (run / "manifests" / f"{command}.yaml").write_text("contract_version: '2'\n")
+
+    subprocess.run(["git", "add", *_published_paths()], cwd=repository, check=True, capture_output=True)
+    modes = _staged_modes(repository)
+    linked = [path for path, mode in modes.items() if mode == "120000"]
+    assert linked == [f"runs/{RUN_ID}/manifests/{commands[0]}.yaml"], (
+        f"the mode guard did not detect the carried-through symlink; staged modes were {modes}"
+    )
+    # And the real manifests alongside it are unaffected, so the check is specific rather than blanket.
+    assert all(
+        modes[f"runs/{RUN_ID}/manifests/{command}.yaml"] == "100644" for command in commands[1:]
     )

@@ -607,11 +607,28 @@ rather than adopted wholesale:
   checkout pointing at an off-checkout run is staged successfully, and its blob content is the target
   path. Staging `runs/<id>/spec.yaml -> /scratch/<id>/spec.yaml` therefore puts a host path into the
   index, and it is allowlisted precisely because a real `spec.yaml` there must be publishable. No
-  `.gitignore` rule can separate the two cases. The property is enforced one level up instead:
-  publication must **copy**, never link, and a test asserts `github-sync.sh` contains no symlink
-  publication while demonstrating the hazard concretely so the tripwire's reason cannot be mistaken for
-  theory. This matters because making the publisher follow a relocated `RUN_ROOT` by symlink is a
-  plausible implementation of a fix currently under discussion upstream.
+  `.gitignore` rule can separate the two cases — but **git's index mode does**, exactly: `120000` for a
+  symlink against `100644` for a real file. So the property is asserted as an outcome rather than as an
+  implementation detail: after the publisher's `git add`, no staged entry under `runs/` may have mode
+  `120000`. That holds however a link arrives — `cp -s`, `rsync -l`, a helper the script shells out to, or
+  a reimplementation of the publisher — where a source-text tripwire only covers today's script. Both are
+  present; the mode assertion is the guard and the tripwire is the early warning. This matters because
+  making the publisher follow a relocated `RUN_ROOT` by symlink is a plausible implementation of a fix
+  currently under discussion upstream, so *copy, never link* is a constraint on that work.
+
+  Only the symlinked-*file* case needs guarding. A symlinked *directory* is refused by git itself —
+  `fatal: ... is beyond a symbolic link`, exit 128 — so it fails loudly and never reaches the index. Both
+  cases were measured here rather than inferred from one another.
+
+  **"Copy, never link" is not sufficient on its own**, which is why the guard is the mode assertion rather
+  than the constraint. GNU `cp -R` *preserves* symlinks; only `-L` dereferences them. Measured: copying a
+  `manifests/` directory whose `predict.yaml` is a link into scratch produces a link in the destination,
+  and staging that gives mode `120000` with the host path as blob content — exit 0, no warning, alongside
+  a real manifest at `100644`. So a run whose manifest happens to be a link into scratch, an ordinary
+  cluster arrangement rather than a workaround, leaks **without anyone attempting the symlink route and
+  with nothing wrong in the publisher's text**. A source-text tripwire passes on that case; the mode
+  assertion fails it, and a test asserts exactly that discrimination rather than only passing on a clean
+  fixture where it could not fail.
 
 - **`RUN_ROOT` is anchored to the model directory** rather than to the caller's working directory. With
   the template's relative default, invoking `submit.sh` from the repository or worktree root writes
