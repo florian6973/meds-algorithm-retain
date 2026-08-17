@@ -11,10 +11,17 @@ paths of a real run.
 These tests assert both directions, because an ignore rule that is too broad silently breaks result
 publication and an ignore rule that is too narrow silently leaks. The allowlist is derived from what
 `github-sync.sh` actually commits rather than restated here, so the two cannot drift apart.
+
+The invariant relied on is **the staged-path line**, not the file. `scripts/github-sync.sh` is a per-model
+Copier render and differs across ports in its branch name and commit message -- five distinct hashes
+across this pilot -- while its `git add` line is character-identical in all of them. A port rendered for a
+different profile could legitimately stage different evidence, which is exactly why the list is read from
+the script instead of restated.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -33,6 +40,13 @@ def _is_ignored(path: str) -> bool:
         ).returncode
         == 0
     )
+
+
+def _profile_commands() -> list[str]:
+    """The commands this repository's selected profile runs, hence its manifest set."""
+    from meds_model_contract import MODEL_PROFILES
+
+    return [command.value for command in MODEL_PROFILES["supervised"]]
 
 
 def _published_paths() -> list[str]:
@@ -87,7 +101,8 @@ def test_github_sync_can_still_stage_its_result(tmp_path):
     run = repository / "runs" / RUN_ID
     (run / "spec.yaml").write_text("dataset: {}\n")
     (run / "result.yaml").write_text("status: complete\n")
-    (run / "manifests" / "predict.yaml").write_text("contract_version: '2'\n")
+    for command in _profile_commands():
+        (run / "manifests" / f"{command}.yaml").write_text("contract_version: '2'\n")
     (run / "command-args" / "predict.args").write_text("external_meds_dir=/data/MIMIC_MEDS\n")
 
     published = _published_paths()
@@ -96,11 +111,15 @@ def test_github_sync_can_still_stage_its_result(tmp_path):
     staged = subprocess.run(
         ["git", "diff", "--cached", "--name-only"], cwd=repository, capture_output=True, text=True
     ).stdout.split()
-    assert sorted(staged) == [
-        f"runs/{RUN_ID}/manifests/predict.yaml",
-        f"runs/{RUN_ID}/result.yaml",
-        f"runs/{RUN_ID}/spec.yaml",
-    ], f"github-sync.sh would have staged {staged}"
+    expected = sorted(
+        [f"runs/{RUN_ID}/manifests/{command}.yaml" for command in _profile_commands()]
+        + [f"runs/{RUN_ID}/result.yaml", f"runs/{RUN_ID}/spec.yaml"]
+    )
+    # A real `supervised` run publishes one manifest per command plus spec and result -- five files, not
+    # three. The count is derived from the profile rather than written down, because a fixture that
+    # publishes one manifest would still pass every rule here (`manifests/**` is allowlisted wholesale)
+    # while a move to per-file exceptions would silently lose the other two.
+    assert sorted(staged) == expected, f"github-sync.sh would have staged {staged}, expected {expected}"
 
 
 def test_a_careless_add_all_cannot_pick_up_run_inputs(tmp_path):
@@ -125,8 +144,10 @@ def test_a_careless_add_all_cannot_pick_up_run_inputs(tmp_path):
     # A finished run: publishable evidence alongside inputs, artifacts, logs and checkpoints.
     (run / "spec.yaml").write_text("dataset: {}\n")
     (run / "result.yaml").write_text("status: complete\n")
-    (run / "manifests" / "predict.yaml").write_text("contract_version: '2'\n")
-    (run / "command-args" / "predict.args").write_text(f"external_meds_dir={host_path}\n")
+    for command in _profile_commands():
+        (run / "manifests" / f"{command}.yaml").write_text("contract_version: '2'\n")
+    for command in _profile_commands():
+        (run / "command-args" / f"{command}.args").write_text(f"external_meds_dir={host_path}\n")
     (run / "artifacts" / "data" / "shard.parquet").write_bytes(b"\x00")
     (run / "logs" / "driver.log").write_text(f"reading {host_path}\n")
     (run / "checkpoints" / "model.pt").write_bytes(b"\x00")
@@ -156,6 +177,203 @@ def test_the_args_files_would_have_carried_real_paths():
     config = (ROOT / "slurm" / "config.sh").read_text()
     assert "external_meds_dir=${MEDS_ROOT" in config
     assert "external_labels_dir=${LABELS_DIR" in config
-    assert 'RUN_ROOT="${RUN_ROOT:-runs}"' in config, (
-        "RUN_ROOT defaults to a relative path, which is why run output lands in the checkout at all"
+    assert 'RUN_ROOT="${RUN_ROOT:-$_retain_model_root/runs}"' in config, (
+        "RUN_ROOT must anchor to the model directory; a relative default sends output to the caller's "
+        "working directory, which this model's .gitignore cannot reach"
+    )
+
+
+def test_the_ignore_rules_the_publisher_and_the_submitter_agree_on_one_path():
+    """The security property is anchored on a literal path that three files must agree about.
+
+    `.gitignore` excludes `runs/**`; `slurm/config.sh` defaults `RUN_ROOT` to `runs`; and
+    `scripts/github-sync.sh` hardcodes `result_dir="runs/$run_id"` without ever reading `RUN_ROOT`. Today
+    those agree by sharing the same literal, not by construction.
+
+    Two things break if they diverge. Pointing `RUN_ROOT` at another *relative* path puts run output back
+    inside the checkout at a location these ignore rules do not cover, and the `command-args` leak
+    returns. Pointing it at an absolute scratch path is safe for the leak but makes the publisher search
+    `./runs/` on a complete run, find nothing, and exit reporting "refusing to publish an incomplete run"
+    -- an error naming the run when the cause is the configuration.
+
+    This asserts the agreement so a change to any one of the three is a failing test rather than a quiet
+    change in what can be committed.
+    """
+    publisher = (ROOT / "scripts" / "github-sync.sh").read_text()
+    config = (ROOT / "slurm" / "config.sh").read_text()
+    ignore = (ROOT / ".gitignore").read_text()
+
+    published_root = re.search(r'result_dir="([^/"]+)/', publisher)
+    assert published_root, "could not read the run root out of github-sync.sh"
+    configured_root = re.search(r'RUN_ROOT="\$\{RUN_ROOT:-\$_retain_model_root/([^}]+)\}"', config)
+    assert configured_root, (
+        "could not read an anchored RUN_ROOT default out of slurm/config.sh; it must resolve against the "
+        "model directory rather than the caller's working directory"
+    )
+
+    assert published_root.group(1) == configured_root.group(1), (
+        f"github-sync.sh publishes from {published_root.group(1)!r} but submit.sh writes to "
+        f"{configured_root.group(1)!r}; a complete run would fail to publish"
+    )
+    assert f"{published_root.group(1)}/**" in ignore, (
+        f"the ignore rules do not cover {published_root.group(1)!r}, which is where run output lands"
+    )
+
+
+def test_run_output_lands_inside_the_model_whatever_the_working_directory(tmp_path):
+    """Defect #9: the template's relative `RUN_ROOT` follows the caller's cwd, not the model.
+
+    Invoked from the repository or worktree root, `submit.sh` with a relative default writes
+    `<worktree>/runs/` -- a sibling of this model, which this model's `.gitignore` cannot reach. Measured
+    before the fix: `git check-ignore runs/probe/command-args/x.args` from the worktree root reported it
+    TRACKABLE while the in-model path was IGNORED, so the dataset paths in those files were committable
+    with no misconfiguration at all -- no `RUN_ROOT` override, no cluster, just the wrong directory.
+
+    A `.gitignore` at `models/<name>/` cannot cover a sibling path, so this is fixed where it originates
+    by anchoring `RUN_ROOT` to the model directory rather than by widening the ignore rules.
+    """
+    result = subprocess.run(
+        ["bash", str(ROOT / "slurm" / "submit.sh"), "--dry-run"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{ROOT / '.venv' / 'bin'}{os.pathsep}{os.environ['PATH']}"},
+    )
+    assert result.returncode == 0, result.stderr
+    written = re.findall(r"MEDS_MODEL_ARGS_FILE=([^,\\ ]+)", result.stdout)
+    assert written, f"no args paths in dry-run output: {result.stdout[:400]}"
+    for path in written:
+        assert path.startswith(str(ROOT / "runs")), (
+            f"run output would land at {path}, outside {ROOT}/runs where the ignore rules apply"
+        )
+
+
+def test_a_run_root_the_publisher_cannot_reach_is_refused(tmp_path):
+    """An override elsewhere either leaks or breaks publication, so it is refused rather than allowed."""
+    result = subprocess.run(
+        ["bash", str(ROOT / "slurm" / "submit.sh"), "--dry-run"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "RUN_ROOT": str(tmp_path / "elsewhere"),
+            "PATH": f"{ROOT / '.venv' / 'bin'}{os.pathsep}{os.environ['PATH']}",
+        },
+    )
+    assert result.returncode != 0
+    # The message is asserted, not just the exit status. A guard that refuses correctly and then
+    # misdirects costs more than no guard, and the remedy here is counter-intuitive: the fix is to stop
+    # setting RUN_ROOT, not to set it somewhere better, because no value both stores output off-checkout
+    # and lets the publisher find it.
+    assert "resolves outside" in result.stderr
+    assert "unset RUN_ROOT" in result.stderr, "the guard must say what to do, not only what is wrong"
+    assert "external_meds_dir" in result.stderr, "it must name what would leak"
+    assert "refusing to publish an incomplete run" in result.stderr, (
+        "it must name the other failure mode, which reports a misleading cause"
+    )
+    # It must not blame the working directory, which is the anchored and therefore correct route.
+    assert "wrong directory" not in result.stderr
+
+
+def test_the_publisher_copies_rather_than_links_published_evidence(tmp_path):
+    """`.gitignore` cannot defend against publication by symlink, so the publisher is checked instead.
+
+    Measured: `git add` refuses a path outside the repository -- absolute or relative, exit 128, "is
+    outside repository" -- which is what anchors these rules to the checkout's literal `runs/`. But that
+    refusal is not total. A symlink *inside* the checkout pointing at an off-checkout run is staged
+    successfully (exit 0) and its blob content is the **target path**: staging
+    `runs/<id>/spec.yaml -> /scratch/<id>/spec.yaml` puts the host path into the index, and it is
+    allowlisted precisely because a real `spec.yaml` there must be publishable.
+
+    No ignore rule can separate those two cases, so the property is enforced one level up: publication
+    must copy. This is a tripwire rather than a fix -- it fires if `github-sync.sh` ever gains symlink
+    publication, which is a plausible implementation of making it follow a relocated `RUN_ROOT`.
+    """
+    publisher = (ROOT / "scripts" / "github-sync.sh").read_text()
+    assert not re.search(r"\bln\s+-s", publisher), (
+        "github-sync.sh appears to publish by symlink; a symlink under runs/ is staged with the host "
+        "path as its content, and no .gitignore rule can distinguish it from the real file"
+    )
+
+    # And demonstrate the hazard concretely, so the tripwire's reason cannot be mistaken for theory.
+    repository = tmp_path / "checkout"
+    (repository / "runs" / RUN_ID).mkdir(parents=True)
+    outside = tmp_path / "scratch" / RUN_ID
+    outside.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    (repository / ".gitignore").write_text((ROOT / ".gitignore").read_text())
+    (outside / "spec.yaml").write_text("dataset: /groups/example/MIMIC_MEDS\n")
+    (repository / "runs" / RUN_ID / "spec.yaml").symlink_to(outside / "spec.yaml")
+
+    subprocess.run(["git", "add", "-A"], cwd=repository, check=True, capture_output=True)
+    staged_content = subprocess.run(
+        ["git", "diff", "--cached"], cwd=repository, capture_output=True, text=True
+    ).stdout
+    assert str(outside) in staged_content, (
+        "the symlink hazard this test guards against no longer reproduces; re-derive the guard before "
+        "relaxing it"
+    )
+
+
+def _dry_run_args_paths(cwd, **env):
+    result = subprocess.run(
+        ["bash", str(ROOT / "slurm" / "submit.sh"), "--dry-run"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{ROOT / '.venv' / 'bin'}{os.pathsep}{os.environ['PATH']}", **env},
+    )
+    return result, re.findall(r"MEDS_MODEL_ARGS_FILE=([^,\\ ]+)", result.stdout)
+
+
+def test_the_anchor_resolves_identically_from_the_model_directory():
+    """Row 1: the ordinary invocation is unchanged by anchoring."""
+    result, paths = _dry_run_args_paths(ROOT)
+    assert result.returncode == 0, result.stderr
+    assert paths and all(path.startswith(str(ROOT / "runs")) for path in paths)
+
+
+def test_an_explicit_relative_run_root_is_still_refused_from_the_worktree_root(tmp_path):
+    """Row 4: anchoring must not accidentally launder a deliberate override into the right place.
+
+    `RUN_ROOT=runs` from the worktree root resolves to a sibling of this model, so it is refused. The
+    same value from the model directory resolves to the model's own `runs/` and is accepted -- the guard
+    compares resolved paths, not strings, so identical text can be right or wrong depending on cwd.
+    """
+    worktree_root = ROOT.parents[1]
+    result, _ = _dry_run_args_paths(worktree_root, RUN_ROOT="runs")
+    assert result.returncode != 0, "a repo-root-relative RUN_ROOT must not be accepted"
+    assert "resolves outside" in result.stderr
+
+    accepted, paths = _dry_run_args_paths(ROOT, RUN_ROOT="runs")
+    assert accepted.returncode == 0, accepted.stderr
+    # Resolved against the invocation directory, not compared as a string: submit.sh passes through
+    # whatever form RUN_ROOT had, so the same location can appear relative or absolute.
+    assert paths and all(
+        Path(ROOT / path).resolve().is_relative_to((ROOT / "runs").resolve()) for path in paths
+    )
+
+
+def test_the_anchored_run_root_is_what_the_publisher_resolves():
+    """Row 5: fixing #9 must not walk into #8 by breaking the publisher's lookup.
+
+    `scripts/github-sync.sh` hardcodes `result_dir="runs/$run_id"` relative to its working directory. An
+    anchor that makes `RUN_ROOT` absolute but lands anywhere other than that produces a leak-free run
+    that cannot be published -- trading a silent defect for a loud one. Rows 1 to 4 all pass for such an
+    anchor, so this is the assertion that discriminates.
+    """
+    result, paths = _dry_run_args_paths(ROOT)
+    assert result.returncode == 0, result.stderr
+    assert paths, result.stdout[:400]
+    run_id = re.search(r"RUN_ID=([^,\\ ]+)", result.stdout).group(1)
+
+    # <root>/<run_id>/command-args/<command>.args -> the run directory submit.sh actually writes.
+    written_run_dir = Path(ROOT / paths[0]).resolve().parent.parent
+    # What `result_dir="runs/$run_id"` resolves to when github-sync.sh is run from the model directory,
+    # which is how README.md documents invoking it.
+    publisher_run_dir = (ROOT / "runs" / run_id).resolve()
+    assert written_run_dir == publisher_run_dir, (
+        f"submit.sh writes the run to {written_run_dir}, but github-sync.sh would publish from "
+        f"{publisher_run_dir}; a completed run could not be published"
     )

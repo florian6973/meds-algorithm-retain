@@ -578,6 +578,70 @@ rather than adopted wholesale:
   patterns, so it is a template defect rather than five independent mistakes and belongs upstream. The
   fix is recorded here because this port must not ship with the hole, not because downstream is where it
   should live.
+
+  The invariant the test depends on is **`github-sync.sh`'s staged-path line, not that file**. The script
+  is a per-model Copier render and differs across the pilot's ports in its branch name and commit message
+  — five distinct hashes — while its `git add` line is character-identical in all of them. A port rendered
+  for a different profile could legitimately stage different evidence, which is why the list is read from
+  the script rather than restated. An earlier version of this note claimed the file itself was identical
+  across ports; that was checked and is false.
+
+- **The literal run path is a three-way coupling, and it is now asserted.** `.gitignore` excludes
+  `runs/**`, `slurm/config.sh` defaults `RUN_ROOT` to `runs`, and `scripts/github-sync.sh` hardcodes
+  `result_dir="runs/$run_id"` **without ever reading `RUN_ROOT`**. Those agree today by sharing a literal,
+  not by construction. Overriding `RUN_ROOT` to another *relative* path puts run output back inside the
+  checkout where these rules do not cover it and the `command-args` leak returns; overriding it to an
+  absolute scratch path is leak-safe but makes the publisher search `./runs/` on a complete run, find
+  nothing, and exit reporting "refusing to publish an incomplete run" — an error naming the run when the
+  cause is the configuration. `tests/test_run_output_is_not_committable.py` asserts the three agree, so a
+  change to any one of them is a failing test rather than a silent change in what can be committed.
+  Mutation-checked: setting `RUN_ROOT` to `scratch` fails with "github-sync.sh publishes from 'runs' but
+  submit.sh writes to 'scratch'; a complete run would fail to publish".
+
+  **The anchor is enforced by git, not merely chosen.** `git add` refuses a path outside the repository —
+  measured at exit 128 for both the absolute and the relative form, "is outside repository" — so
+  publication can only ever stage paths inside the checkout, whatever `RUN_ROOT` is set to. These rules
+  are therefore anchored on the one path that cannot move.
+
+  **One residual hole that no ignore rule can close.** That refusal is not total: a symlink *inside* the
+  checkout pointing at an off-checkout run is staged successfully, and its blob content is the target
+  path. Staging `runs/<id>/spec.yaml -> /scratch/<id>/spec.yaml` therefore puts a host path into the
+  index, and it is allowlisted precisely because a real `spec.yaml` there must be publishable. No
+  `.gitignore` rule can separate the two cases. The property is enforced one level up instead:
+  publication must **copy**, never link, and a test asserts `github-sync.sh` contains no symlink
+  publication while demonstrating the hazard concretely so the tripwire's reason cannot be mistaken for
+  theory. This matters because making the publisher follow a relocated `RUN_ROOT` by symlink is a
+  plausible implementation of a fix currently under discussion upstream.
+
+- **`RUN_ROOT` is anchored to the model directory** rather than to the caller's working directory. With
+  the template's relative default, invoking `submit.sh` from the repository or worktree root writes
+  `<worktree>/runs/` — a sibling of this model, which this model's `.gitignore` cannot reach. Measured
+  before the fix: `git check-ignore runs/probe/command-args/x.args` from the worktree root reported it
+  **trackable** while the in-model path was ignored, so the dataset paths in those files were committable
+  with no misconfiguration at all — no override, no cluster, just the wrong working directory. A
+  `.gitignore` at `models/<name>/` cannot cover a sibling path, so this is fixed where it originates.
+  An override resolving anywhere else is refused, because **there is currently no `RUN_ROOT` that both
+  stores output off-checkout and publishes**: off-checkout is leak-safe but the publisher aborts with
+  "refusing to publish an incomplete run" against a run that completed, and in-checkout-but-elsewhere
+  leaks. The default is the only working configuration — which is worth stating plainly because
+  `DGX_AGENTIC_WORKFLOW.md:390` prescribes an off-checkout run root.
+
+  **The anchor must also agree with the publisher's lookup, and that is the assertion that
+  discriminates.** An anchor that makes `RUN_ROOT` absolute but lands anywhere other than what
+  `result_dir="runs/$run_id"` resolves to fixes #9 by walking into #8 — a leak-free run that cannot be
+  published. Five cases are asserted, not two: resolution from the model directory, resolution from the
+  worktree root (corrected, not refused), that path being gitignored, an explicit `RUN_ROOT=runs` from the
+  worktree root still being refused while the same string from the model directory is accepted, and the
+  written run directory being **identical** to what the publisher would resolve. Mutation-checked: an
+  anchor that is internally consistent but points at `scratch-runs` still passes several of the others and
+  fails the publisher-equality case.
+
+  The two guards do different jobs and both are present: anchoring makes the accidental route (invoking
+  `submit.sh` from another directory) *correct* rather than refused, and the refusal catches a deliberate
+  bad override. The guard's **message** is asserted, not merely its exit status, because the remedy here
+  is counter-intuitive — the fix is to stop setting `RUN_ROOT`, not to set it somewhere better — and a
+  guard that refuses correctly while misdirecting costs more than no guard. The test also asserts the
+  message does not blame the working directory, since that route is anchored and therefore fine.
 - **The PATH requirement is documented in `config.sh`.** Both `submit.sh` and `job.sbatch` call
   `meds-model` by bare name; without the virtualenv on PATH, `submit.sh` prints "No commands declared" on
   the login node — observed directly here while testing `--dry-run`. Since `--export=ALL` is passed,
