@@ -1,6 +1,6 @@
-"""Device portability of the real DAG.
+"""Device portability of the real model profile.
 
-`device` defaults to `auto`, so on this host the ordinary local gate already runs the DAG on CUDA and the
+`device` defaults to `auto`, so on this host the ordinary local gate already runs the profile on CUDA and the
 manifests carry real GPU byte counts. That makes the *untested* direction the opposite one: a CPU-only
 node, and a checkpoint trained on GPU but scored on CPU. Both are ordinary cluster shapes.
 

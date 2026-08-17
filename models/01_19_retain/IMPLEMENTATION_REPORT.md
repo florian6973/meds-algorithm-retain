@@ -19,9 +19,9 @@
   in that PDF. Every hyper-parameter default used here therefore comes from the official code, which is
   the authoritative artefact for exactly the details those appendices would have carried.
 
-## DAG choice
+## Model profile choice
 
-- Selected DAG: `supervised`
+- Selected model profile: `supervised`
 - Justification: RETAIN has no task-independent stage to place anywhere else. `train_RETAIN` in
   `retain.py` initialises `W_emb`, both attention GRUs and the risk head together, and optimises all of
   them against the labelled endpoint in one loop; there is no pretraining objective, no frozen encoder and
@@ -164,6 +164,24 @@ written last, and a failure removes the staging directory without publishing
    (one class only, or no rows), the final epoch is kept and the manifest records
    `selected_by: final_epoch` instead of claiming a selection that never happened.
 
+### Template revision
+
+Rendered at `MEDS_model_template` `15d76f7dd96178115668447f7e4a936e0bafa6a2`, updated to
+`280b31d1b91b42940e2b9810d206fd84056fa16c` via `copier update` (a `.copier-answers.yml` reconstructing the
+original render was committed first, so the delta applied as a three-way merge rather than by hand). The
+update brought: the `DAGS` -> `MODEL_PROFILES` rename and `ModelRepository.dag` -> `.profile_commands`; the
+required `tests/test_primary_behavior.py` and its `tests/signal.py` fixture; and upstream versions of the
+two fixes this port had found independently.
+
+**Both local fixes were replaced by upstream's rather than stacked.** Upstream's `-C` fix is functionally
+identical to the one carried here. Upstream's PATH fix is at the same single call site this port
+established -- `meds-dev-task` only, not `meds-dev-dataset` -- so the narrow version was correct. Its
+comment attributes the failure to an *ambient* MEDS-DEV install winning the name; the failure measured here
+on a clean host was that `aces-cli` and `expand_shards` were **not found at all** (exit 127), because
+running `.venv/bin/meds-dev-task` by absolute path never activates that virtualenv. The fix is right either
+way; the rationale differs, and someone debugging a 127 from upstream's comment would look in the wrong
+place.
+
 ### Deviation from the rendered scaffold
 
 - `src/meds_model_contract/manifest.py` was replaced with the text already carried by
@@ -182,11 +200,38 @@ written last, and a failure removes the staging directory without publishing
 
 ## Verification
 
+### Primary behavior
+
+- **Signal and expected behavior**: `tests/signal.py`'s `SIGNAL//POS` alone determines the label. RETAIN's
+  primary behavior is to represent a medical code and let the visit attention decide where it mattered, so
+  the model must reach a high held-out AUC on this cohort and must attribute the score to that code.
+- **How the signal enters the model's selected codes/features**: through the learned vocabulary. This port
+  has three places a code can be dropped before the model sees it -- the `min_code_count`/`max_vocab_size`
+  frequency filter, the MEDS-standard-marker exclusion, and the prediction-time window -- so the test
+  proves the binding at two levels rather than one: `SIGNAL//POS` is in `vocabulary.parquet`, *and* its
+  code index appears in the built multi-hot sequence of exactly the positive subjects and no others
+  (`np.array_equal(carries_signal, labels)`). It further asserts the signal sits at more than one visit
+  index and that sequence length does not separate the classes, so a position- or length-counting model
+  could not pass.
+- **Example generator used or adaptation made**: `tests/signal.py` used unchanged. One model-side
+  configuration change: `visit_bucket_minutes=60` instead of the port's 1440 default. The generator spaces
+  its events one hour apart, so a daily bucket would collapse every subject to a single visit and the test
+  would never exercise the visit attention that distinguishes RETAIN from a bag-of-codes model. That is a
+  configuration choice, not a change to the fixture.
+- **Positive-control result**: held-out AUC **0.937** (40 epochs, embed/alpha/beta 32, batch 32, CPU). The
+  Eq. (5) attribution names `SIGNAL//POS` as the top-contributing code for **>80%** of positive keys, which
+  is the interpretability claim itself under test rather than only the score. AUC saturates below 1.0 for a
+  faithful reason: `alpha` is a softmax over visits and the official `* 0.5` scaling halves its logits, so
+  attention cannot fully concentrate on the single visit carrying the code. Ten epochs already reach 0.907.
+- **Shuffled-label negative-control result**: held-out AUC **0.460** on the identical cohort with labels
+  shuffled, a gap of **+0.477**. Without this the positive result would not distinguish "the model learned
+  the code" from "the fixture leaks".
+
 | Suite/run | Exact command | Pass/skip counts | Coverage/result |
 |---|---|---|---|
-| Local | `uv run pytest -rs` | 66 passed, 2 skipped, 0 failed. **0 `model_stub` skips** | Real three-command DAG on the synthetic fixture. 66/66 requested keys covered exactly, keys unique, prediction schema aligned by `meds_evaluation.PredictionSchema` |
+| Local | `uv run pytest -rs` | 72 passed, 2 skipped, 0 failed. **0 `model_stub` skips** | Real three-command model profile on the synthetic fixture. 66/66 requested keys covered exactly, keys unique, prediction schema aligned by `meds_evaluation.PredictionSchema` |
 | MEDS-DEV | `uv run pytest -m meds_dev -rs` | 1 passed, 53 deselected, 0 skipped, 0 failed | `meds-dev-model model=retain mode=full dataset_type=supervised` in MEDS-DEV's own isolated venv (torch 2.13.0 and `retain 0.1.0` installed there from `requirements.txt`). 13/13 `held_out` keys covered exactly |
-| MIMIC-IV demo | `uv run pytest -m real_data -rs` | 1 passed, 67 deselected, 0 skipped, 0 failed | Full DAG on the MEDS-DEV MIMIC-IV demo and the pinned `mortality/in_icu/first_24h` task. 6/6 `held_out` keys covered exactly, keys unique, schema aligned |
+| MIMIC-IV demo | `uv run pytest -m real_data -rs` | 1 passed, 67 deselected, 0 skipped, 0 failed | Full model profile on the MEDS-DEV MIMIC-IV demo and the pinned `mortality/in_icu/first_24h` task. 6/6 `held_out` keys covered exactly, keys unique, schema aligned |
 | Full MIMIC-IV | not run | not run | Blocked pending a separate human approval after the demo gate |
 
 The two skips in the local run are `tests/test_meds_dev_e2e.py` and `tests/test_mimic_demo_e2e.py`, both
@@ -198,7 +243,7 @@ reason, `no CUDA device on this host`; on this host they run.
 **Both reported gates exercised the GPU.** `device` defaults to `auto`, so `supervised_train` and `predict`
 resolved to CUDA in the local and MEDS-DEV runs, and their manifests carry real
 `torch.cuda.max_memory_allocated` byte counts rather than nulls. The demo and full runs will therefore not
-be the first time this port touches an accelerator. `tests/test_device.py` additionally pins the whole DAG
+be the first time this port touches an accelerator. `tests/test_device.py` additionally pins the whole profile
 on CPU only, on CUDA only, and trained-on-CUDA/scored-on-CPU, since a CPU-only node is an ordinary cluster
 shape that a GPU-defaulting suite would otherwise never cover.
 
@@ -213,9 +258,13 @@ Beyond the contract's own conformance tests, this port adds:
   bucketing, the prediction-time boundary in both settings, the non-straddling cut, `lookback_days`,
   `max_visits`, empty histories, visit gaps, and both split-map sources.
 - `tests/test_device.py` (9 tests, 5 CUDA-gated) -- the same-seed determinism control, exact on CPU and
-  within a stated tolerance on CUDA, its different-seeds counterpart, the whole DAG on CPU and on CUDA, a CUDA checkpoint
+  within a stated tolerance on CUDA, its different-seeds counterpart, the whole profile on CPU and on CUDA, a CUDA checkpoint
   scored on CPU, device-independent weight initialisation, CPU/CUDA numerical agreement with dropout
   disabled, and that the pinned `bias_hh` survives a device move and GPU training.
+- `tests/test_primary_behavior.py` (4 tests, required by the template and not marker-gated) -- the signal
+  binding at vocabulary *and* sequence level, the fixture's position/length defences verified rather than
+  assumed, the real profile's learned response with a shuffled-label control, and RETAIN's own Eq. (5)
+  attribution naming the signal code.
 - `tests/test_determinism.py` (5 tests) -- that a run reproduces from the content of its inputs rather
   than their file layout: permuted label row order leaves predictions bit-identical, `read_labels` imposes
   a canonical order, minibatch composition is invariant to the order keys arrive in, vocabulary selection
@@ -497,7 +546,7 @@ epochs, and 9% of its keys are scored at the intercept. The validation AUC recor
    gate is the first evidence that would inform it.
 8. **A seeded run is reproducible on a fixed device, but not across devices.** Both halves were measured
    rather than reasoned about.
-   - *Fixed device, the control:* two full DAG runs at the same seed produce **bit-identical**
+   - *Fixed device, the control:* two full profile runs at the same seed produce **bit-identical**
      predictions, on CPU and again on CUDA, compared exactly rather than within a tolerance
      (`tests/test_device.py::test_two_runs_with_the_same_seed_are_bit_identical`). A companion test shows
      two *different* seeds diverge, so the seed is demonstrably wired in rather than merely unused.

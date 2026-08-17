@@ -2,12 +2,12 @@
 
 RETAIN implemented against the minimal MEDS model contract.
 
-This repository implements the **`supervised`** DAG under version 2 of the minimal MEDS model
+This repository implements the **`supervised`** model profile under version 2 of the minimal MEDS model
 contract. The contract standardizes MEDS input, command meanings and arguments, artifact envelopes,
 final predictions, measurements, MEDS-DEV packaging, and operational interfaces. The model owns every
 computational choice and every intermediate payload.
 
-## Command graph
+## Model profile commands
 
 ```text
 preprocess_data -> supervised_train -> predict
@@ -25,7 +25,7 @@ must not assume batches, Lightning, PyTorch, Parquet intermediate data, or itera
 ## Inputs and predicates
 
 - `external_meds_dir` is the standard MEDS dataset boundary.
-- `external_labels_dir` supplies task prediction times and training labels where the DAG needs them.
+- `external_labels_dir` supplies task prediction times and training labels where the model profile needs them.
 - `external_predicates_file` is **not used**. This port is rendered `uses_predicates=false` and is
   predicate-free by construction: RETAIN's published input is a sequence of medical codes, which the MEDS
   `code` column already is, so there is nothing for a dataset predicate to resolve. Every command rejects
@@ -48,7 +48,7 @@ cards/01_supervised_models/19_retain.md, https://proceedings.neurips.cc/paper/20
 
 The model-owned surface is `src/retain/commands.py`, command configuration, `model.yaml`, and
 `tests/e2e.py`. Implement every registered command, define exact intermediate compatibility checks,
-finalize MEDS-DEV command strings, and complete the report. Keep `IS_STUB = True` until the actual DAG
+finalize MEDS-DEV command strings, and complete the report. Keep `IS_STUB = True` until the actual model profile
 runs end to end.
 
 ## Verification
@@ -62,7 +62,7 @@ uv run pytest -m real_data -rs
 - The default suite runs the local end-to-end adapter and contract tests.
 - `meds_dev` registers `model.yaml`, installs this repository from `requirements.txt` in an isolated
   environment, and executes MEDS-DEV's real command slots.
-- `real_data` runs the full selected DAG on the MEDS-DEV MIMIC-IV demo and the pinned
+- `real_data` runs the full selected model profile on the MEDS-DEV MIMIC-IV demo and the pinned
   `mortality/in_icu/first_24h` task. Set `MEDS_DEMO_DIR` to reuse an existing demo and `MEDS_DEV_DIR` to
   reuse a checkout. MEDS-DEV's MIMIC predicates are located and checked for presence by the test, but this
   model does not read them.
@@ -101,7 +101,7 @@ $EDITOR slurm/config.sh
 scripts/github-sync.sh <run-id>
 ```
 
-SLURM follows the selected DAG and chains stages by successful dependencies. Structured evidence belongs
+SLURM follows the selected model profile and chains stages by successful dependencies. Structured evidence belongs
 under `runs/<run-id>/`; raw logs, datasets, checkpoints, and credentials do not. GitHub synchronization
 pushes a `runs/retain/<run-id>` branch and optionally opens a draft PR. A failed push leaves the
 result committed and recoverable locally.

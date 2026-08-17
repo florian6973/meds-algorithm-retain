@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from meds_model_contract import DAGS, read_manifest
+from meds_model_contract import MODEL_PROFILES, read_manifest
 from retain.commands import IS_STUB
 
 
@@ -19,7 +19,7 @@ def test_end_to_end(tmp_path: Path):
 
     result = run_e2e(tmp_path)
     artifacts = result.artifacts
-    assert list(artifacts) == [command.value for command in DAGS["supervised"]]
+    assert list(artifacts) == [command.value for command in MODEL_PROFILES["supervised"]]
     for command, directory in artifacts.items():
         manifest = read_manifest(directory)
         assert manifest["command"]["name"] == command

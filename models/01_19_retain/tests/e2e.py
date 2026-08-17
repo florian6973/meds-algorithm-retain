@@ -1,4 +1,4 @@
-"""Model-owned DAG adapters plus shared MEDS-DEV MIMIC demo provisioning."""
+"""Model-owned profile adapters plus shared MEDS-DEV MIMIC demo provisioning."""
 
 import os
 from collections.abc import Mapping, Sequence
@@ -43,7 +43,7 @@ def prepare_fixture(tmp_path, **inputs):
 
 
 def run_e2e(tmp_path, **inputs):
-    """Execute the real `supervised` DAG and return an `E2EResult`.
+    """Execute the real `supervised` model profile and return an `E2EResult`.
 
     The result carries the label index and the evaluated splits alongside the artifacts, because SPEC
     section 8 requires the generic conformance test to compare the actual prediction keys against the
@@ -184,9 +184,11 @@ def prepare_mimic_demo(meds_dev, tmp_path):
             f"dataset_dir={dataset_dir}",
             f"output_dir={labels_dir}",
         ],
-        timeout=RUN_TIMEOUT,
+        # MEDS-DEV's task runner launches venv-installed helpers by bare name.
+        # Prepend the pinned checkout so an ambient MEDS-DEV install cannot win.
         # `run()` merges this over os.environ, so nothing else about the environment is disturbed.
         env={"PATH": f"{venv_bin(meds_dev)}{os.pathsep}{os.environ['PATH']}"},
+        timeout=RUN_TIMEOUT,
     )
     predicates_file = meds_dev / "src" / "MEDS_DEV" / "datasets" / "MIMIC-IV" / "predicates.yaml"
     return dataset_dir, labels_dir, predicates_file

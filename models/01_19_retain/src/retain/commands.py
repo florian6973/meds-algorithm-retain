@@ -1,4 +1,4 @@
-"""Model-owned command implementations for the supervised DAG.
+"""Model-owned command implementations for the supervised model profile.
 
 `preprocess_data -> supervised_train -> predict`, which is RETAIN's actual lifecycle: the embedding, both
 attention GRUs and the risk head are trained jointly against the labelled endpoint by `train_RETAIN`, and
