@@ -700,10 +700,39 @@ links carried in from a run directory built elsewhere). Its cost is that a full 
 land inside the git checkout, which for cluster work is a genuine disadvantage; the other convention keeps
 them out and pays for it by needing dereferencing publication plus the mode assertion to stay safe.
 
-The decisive factor for choosing it here is that `scripts/github-sync.sh` hardcodes
-`result_dir="runs/$run_id"` and never reads `RUN_ROOT`. **This invariant is the one compatible with the
-publisher as it exists today.** If the fleet adopts the off-tree convention together with a publisher that
-resolves `RUN_ROOT`, this guard should be relaxed to match rather than kept as a local divergence.
+The decisive factor for choosing it here is that **this port's** `scripts/github-sync.sh` — the 29-line
+template version — hardcodes `result_dir="runs/$run_id"` and never reads `RUN_ROOT`. **This invariant is
+the one compatible with the publisher this port actually ships.** Another port has since built a publisher
+that resolves `RUN_ROOT`, dereferences on copy and skips the self-copy; when that lands here, the stricter
+invariant becomes a divergence rather than a safeguard and this guard should be relaxed to match.
+
+Adopting that conclusion from another port's file, while this port's publisher still hardcodes the path,
+would recreate exactly the failure the guard exists to prevent — a completed run that cannot be published.
+So the reconciliation is coupled mechanically rather than left as a remembered intention:
+`test_off_tree_acceptance_tracks_this_ports_publisher` refuses an off-tree `RUN_ROOT` while the publisher
+hardcodes, and requires it to be *accepted* once the publisher resolves `RUN_ROOT`. The assertion flips
+itself; nobody has to remember.
+
+**Relaxing is not becoming permissive, and that distinction is the whole of it.** The target invariant is
+three-way, not binary:
+
+| `RUN_ROOT` | under either convention |
+|---|---|
+| fully outside the git work tree | refused today; **accepted** once the publisher can follow it |
+| `<model>/runs` (the default) | accepted |
+| **anything else inside the work tree** | **refused, always** |
+
+The middle row is the dangerous one — run output inside the work tree at a path the ignore rules do not
+cover, so the `command-args` files sit unignored — and no convention in the fleet permits it. Lifting a
+`RUN_ROOT`-resolving publisher *without* keeping that refusal would convert today's loud failure (the
+publisher aborts, having found nothing) into a silent one (it publishes happily from an unignored
+location). `test_a_run_root_inside_the_work_tree_but_elsewhere_is_always_refused` asserts that row
+independently of the publisher, so it cannot be lost in the relaxation.
+
+An earlier version of this coupling was written as a single binary predicate — publisher-follows XOR
+guard-refuses — which would have accepted a fully permissive guard as correctly coupled. That is recorded
+because it is the same failure the rest of this section describes: a check that looks like it enforces the
+property while permitting the one state nobody wants.
 
 So the `DGX_AGENTIC_WORKFLOW.md` conflict is **not** a pilot-wide blockage: as written, section 10 is
 correct under the second invariant and refused under this one. It cannot be correct for both

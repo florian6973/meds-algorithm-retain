@@ -461,3 +461,52 @@ def test_the_mode_guard_detects_a_link_that_arrived_without_anyone_linking(tmp_p
     assert all(
         modes[f"runs/{RUN_ID}/manifests/{command}.yaml"] == "100644" for command in commands[1:]
     )
+
+
+def _publisher_follows_run_root() -> bool:
+    """Whether this port's publisher can find a run at a relocated `RUN_ROOT`."""
+    return "RUN_ROOT" in (ROOT / "scripts" / "github-sync.sh").read_text()
+
+
+def test_a_run_root_inside_the_work_tree_but_elsewhere_is_always_refused(tmp_path):
+    """The half of the guard that must survive any convention change.
+
+    Both conventions in the fleet refuse this case, and it is the dangerous one: run output lands inside
+    the work tree at a path the ignore rules do not cover, so the `command-args` files carrying
+    `external_meds_dir` sit unignored. Asserted separately from the off-tree case because relaxing the
+    guard to "accept off-tree" must not be implemented as "accept anything" -- that would be permissive
+    about precisely the case neither convention permits, and silent where the current behaviour is loud.
+    """
+    inside_but_elsewhere = ROOT.parents[1] / "scratch-runs"
+    result, _ = _dry_run_args_paths(ROOT, RUN_ROOT=str(inside_but_elsewhere))
+    assert result.returncode != 0, (
+        f"RUN_ROOT={inside_but_elsewhere} is inside the work tree and outside the ignored model runs/; "
+        "it must be refused under either convention"
+    )
+    assert "resolves outside" in result.stderr
+
+
+def test_off_tree_acceptance_tracks_this_ports_publisher(tmp_path):
+    """Couple the guard to *this* port's publisher, not to a better one existing elsewhere.
+
+    Today `scripts/github-sync.sh` hardcodes `result_dir="runs/$run_id"`, so an off-tree `RUN_ROOT` must
+    be refused: it would otherwise produce a completed run the publisher cannot find. Another port has
+    built a publisher that resolves `RUN_ROOT` and dereferences on copy; when that lands *here*, off-tree
+    becomes the intended configuration and this assertion flips automatically rather than waiting for
+    someone to remember.
+
+    Adopting the relaxation from another port's file while this port still hardcodes would recreate the
+    failure the guard prevents -- and doing it by removing the guard entirely would be worse than either
+    convention, since the in-tree-elsewhere case above would stop being refused.
+    """
+    result, _ = _dry_run_args_paths(ROOT, RUN_ROOT=str(tmp_path / "off-tree-runs"))
+    if _publisher_follows_run_root():
+        assert result.returncode == 0, (
+            "scripts/github-sync.sh resolves RUN_ROOT, so an off-tree run root is the intended "
+            "configuration and the guard should no longer refuse it"
+        )
+    else:
+        assert result.returncode != 0, (
+            "scripts/github-sync.sh hardcodes runs/<run-id>, so an off-tree run root would complete and "
+            "then fail to publish; the guard must refuse it until the publisher can follow it"
+        )
