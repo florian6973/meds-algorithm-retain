@@ -1,0 +1,12 @@
+# This file is managed by Copier. Edit copier.yml or rerun Copier instead of editing it directly.
+_commit: 15d76f7dd96178115668447f7e4a936e0bafa6a2
+_src_path: /home/fpollet/Git/agentic_work/MEDS_model_template
+author_email: ffp2106@cumc.columbia.edu
+author_name: Florent Pollet
+implementation_source: cards/01_supervised_models/19_retain.md, https://proceedings.neurips.cc/paper/2016/hash/231141b34c82aa95e48810a9d1b33a79-Abstract.html,
+  and https://github.com/mp2893/retain
+model_description: RETAIN implemented against the minimal MEDS model contract.
+model_name: RETAIN
+model_slug: retain
+profile: supervised
+uses_predicates: false
