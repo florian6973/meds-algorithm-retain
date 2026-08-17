@@ -156,6 +156,11 @@ def resolved_meds_dev_revision(meds_dev):
     head = head.stdout.strip()
 
     expected = os.environ.get("MEDS_DEV_REF", MEDS_DEV_PREDICATES_REF)
+    # `^{commit}` matters for exactly one override form. A SHA, a branch and a *lightweight* tag all
+    # resolve to the commit under a plain `rev-parse`, so they work with or without the peel. An
+    # *annotated* tag is its own git object: `rev-parse v1.0` returns the tag object's SHA, which never
+    # equals HEAD. Only that case needs peeling, which is why a conformance test using a SHA -- or a
+    # lightweight tag -- cannot tell whether this is here.
     resolved = git("rev-parse", f"{expected}^{{commit}}")
     target = resolved.stdout.strip() if resolved.returncode == 0 else expected
     if head != target:

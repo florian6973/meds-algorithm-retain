@@ -65,11 +65,34 @@ def test_an_unpinned_head_is_refused(repository, monkeypatch):
         assert second in str(error) and first in str(error)
 
 
-def test_a_branch_name_is_resolved_rather_than_string_compared(repository, monkeypatch):
-    """`MEDS_DEV_REF` may name a branch or tag; comparing it literally would always fail."""
+@pytest.mark.parametrize("kind", ["branch", "lightweight-tag", "annotated-tag"])
+def test_a_symbolic_override_is_resolved_to_its_commit(repository, monkeypatch, kind):
+    """`MEDS_DEV_REF` may name a branch or a tag, and the three forms do not behave alike.
+
+    A plain `git rev-parse` already resolves a branch and a *lightweight* tag to the commit, so those two
+    pass whether or not the override is peeled. An **annotated** tag is a git object in its own right:
+    `rev-parse` returns the tag object's SHA, which never equals HEAD, and only `^{commit}` peels it to
+    the commit. Measured on a scratch repository -- lightweight `cat-file -t` reports `commit`, annotated
+    reports `tag` and resolves to a different SHA.
+
+    All three forms are exercised because a test covering only the forms that work either way cannot tell
+    whether the peel is present. That is the same gap as testing an override with a SHA alone.
+    """
     root, _, second = repository
-    _git(root, "tag", "pinned-tag")
-    monkeypatch.setenv("MEDS_DEV_REF", "pinned-tag")
+    if kind == "branch":
+        _git(root, "branch", "pinned-branch")
+        reference = "pinned-branch"
+    elif kind == "lightweight-tag":
+        _git(root, "tag", "pinned-light")
+        reference = "pinned-light"
+    else:
+        _git(root, "tag", "-a", "pinned-annotated", "-m", "annotated")
+        reference = "pinned-annotated"
+        assert _git(root, "cat-file", "-t", reference) == "tag"
+        assert _git(root, "rev-parse", reference) != second, (
+            "an annotated tag must resolve to its own object, or this case is not testing the peel"
+        )
+    monkeypatch.setenv("MEDS_DEV_REF", reference)
     assert resolved_meds_dev_revision(root) == second
 
 
