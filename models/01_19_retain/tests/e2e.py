@@ -108,7 +108,14 @@ def run_e2e(tmp_path, **inputs):
 
 
 def resolved_meds_dev_revision(meds_dev):
-    """Return the MEDS-DEV revision actually provisioned, refusing anything but the pinned one.
+    """Verify **the provisioned clone at `meds_dev`** is at the pinned revision, and return its SHA.
+
+    The anchor is stated first deliberately. This checks the clone that `provision_meds_dev` returns --
+    the checkout that is actually installed into and executed from -- and *not* `MEDS_DEV_DIR`, which is
+    only the source that clone may have been copied from. Checking the source would verify provenance
+    rather than what ran, and would say nothing at all on the URL path. `MEDS_DEV_DIR` appears below as the
+    remedy for a failure, never as the thing under test; a reader who takes the first mention of it as the
+    anchor will misread this function, which has already happened once across the fleet.
 
     `provision_meds_dev` pins the revision only on the branch that clones from the URL::
 
@@ -139,7 +146,13 @@ def resolved_meds_dev_revision(meds_dev):
 
     head = git("rev-parse", "HEAD")
     if head.returncode:
-        raise AssertionError(f"{meds_dev} is not a git checkout: {head.stderr.strip()}")
+        # An opaque failure inside a guard against silent passes is itself a poor guard, so this says
+        # what could not be established rather than only that a command failed.
+        raise AssertionError(
+            f"Could not establish which MEDS-DEV revision was provisioned: {meds_dev} is not a readable "
+            f"git checkout, so the pin is unverified and this gate's result cannot be attributed to a "
+            f"revision. git said: {head.stderr.strip() or '(no output)'}"
+        )
     head = head.stdout.strip()
 
     expected = os.environ.get("MEDS_DEV_REF", MEDS_DEV_PREDICATES_REF)

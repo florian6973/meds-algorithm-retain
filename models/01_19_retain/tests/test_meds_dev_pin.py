@@ -74,8 +74,17 @@ def test_a_branch_name_is_resolved_rather_than_string_compared(repository, monke
 
 
 def test_a_directory_that_is_not_a_checkout_is_refused(tmp_path):
-    with pytest.raises(AssertionError, match="not a git checkout"):
+    """And says what could not be established, not merely that a command failed.
+
+    A typo'd path is the case that would otherwise pass as a clean run, so the failure has to name the
+    thing it could not determine rather than surface a bare subprocess error.
+    """
+    with pytest.raises(AssertionError) as error:
         resolved_meds_dev_revision(tmp_path)
+    message = str(error.value)
+    assert "Could not establish which MEDS-DEV revision" in message
+    assert str(tmp_path) in message
+    assert "unverified" in message
 
 
 def test_the_default_expectation_is_the_ref_integration_pins(repository, monkeypatch):
