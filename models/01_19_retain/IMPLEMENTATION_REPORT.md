@@ -678,15 +678,41 @@ guard **refuses it** — deliberately, because `scripts/github-sync.sh` hardcode
 and never reads `RUN_ROOT`, so such a run would complete and then fail to publish with an error naming the
 run rather than the configuration.
 
-**This will be hit by anyone following the documented procedure**, and the refusal is the correct
-behaviour: it converts a publication failure discovered hours later into an explained refusal at submit
-time. The message names both failure modes and states the remedy, which is to leave `RUN_ROOT` unset.
+**Anyone following the documented procedure against this port will hit it**, and the refusal is the
+correct behaviour here: it converts a publication failure discovered hours later into an explained refusal
+at submit time. The message names both failure modes and states the remedy, which is to leave `RUN_ROOT`
+unset.
 
-The underlying conflict is not resolvable inside this model directory: the workflow document and the
-publisher disagree, and the publisher is template-owned. It is recorded here so the full-data gate is not
-the moment it is discovered. Two documents propagated this class of defect across the fleet rather than
-five ports independently choosing wrong — the other being `docs/CLUSTER.md`'s `cp -r`, which preserves the
-symlinks the `100644` assertion exists to catch.
+### Which invariant this guard enforces
+
+Stated explicitly because "the port has a `RUN_ROOT` guard" reads as agreement across the pilot and
+conceals a split. Two invariants are in use, and this port implements the stricter one:
+
+| Invariant | Off-tree absolute `RUN_ROOT` | In-tree elsewhere | Ports |
+|---|---|---|---|
+| **must resolve to exactly `<model>/runs`** | refused | refused | **this port**, BEHRT |
+| in-tree only where `.gitignore` reaches | accepted (intended) | refused | TECO, DuETT, MEDS-EIC-AR |
+
+Both are coherent and the choice is a real trade-off rather than a correctness question. This one is safe
+by construction — run output can only land where the ignore rules reach, so no `cp -RL` and no index-mode
+check is *required* for the leak to be closed (both are still present, because the mode check also covers
+links carried in from a run directory built elsewhere). Its cost is that a full MIMIC-IV run's artifacts
+land inside the git checkout, which for cluster work is a genuine disadvantage; the other convention keeps
+them out and pays for it by needing dereferencing publication plus the mode assertion to stay safe.
+
+The decisive factor for choosing it here is that `scripts/github-sync.sh` hardcodes
+`result_dir="runs/$run_id"` and never reads `RUN_ROOT`. **This invariant is the one compatible with the
+publisher as it exists today.** If the fleet adopts the off-tree convention together with a publisher that
+resolves `RUN_ROOT`, this guard should be relaxed to match rather than kept as a local divergence.
+
+So the `DGX_AGENTIC_WORKFLOW.md` conflict is **not** a pilot-wide blockage: as written, section 10 is
+correct under the second invariant and refused under this one. It cannot be correct for both
+simultaneously, which makes it an operator decision about which convention the fleet adopts rather than a
+documentation typo. It is recorded here so the full-data gate is not the moment it is discovered.
+
+Documentation rather than five independent choices is still what propagated the underlying class — the
+other instance being `docs/CLUSTER.md`'s `cp -r`, which preserves the symlinks the `100644` assertion
+exists to catch.
 
 ### How the local gate is actually run
 
