@@ -36,17 +36,34 @@ _retain_model_root="$(dirname -- "$_retain_config_dir")"
 RUN_ROOT="${RUN_ROOT:-$_retain_model_root/runs}"
 
 # An explicit override is compared by resolved path, not by string: `RUN_ROOT=runs` is correct from this
-# directory and wrong from the worktree root.
-if [[ "$(realpath -m -- "$RUN_ROOT")" != "$(realpath -m -- "$_retain_model_root/runs")" ]]; then
-  echo "config.sh: RUN_ROOT=$RUN_ROOT resolves outside $_retain_model_root/runs." >&2
-  echo "  Inside the work tree but elsewhere: run output lands where .gitignore does not cover it, and" >&2
-  echo "  the command-args files carry external_meds_dir/external_labels_dir." >&2
-  echo "  Fully outside the work tree: leak-safe, but scripts/github-sync.sh hardcodes runs/<run-id> and" >&2
-  echo "  would abort with 'refusing to publish an incomplete run' against a run that completed." >&2
-  echo "  There is currently no RUN_ROOT that both stores output off-checkout and publishes, so the" >&2
-  echo "  default is the only working configuration: unset RUN_ROOT and re-run." >&2
+# directory and wrong from the worktree root. `realpath -m` resolves a path that need not exist yet, so
+# existence is never confounded with policy.
+#
+# The two refusals exit with DISTINCT codes, because they are different policies and a survey that reads
+# only the status must be able to tell them apart. Conflating them is how "all five ports refuse" was
+# stated across this fleet when in fact two invariants were in use:
+#   4  would leak      -- inside the work tree, outside the ignored model runs/
+#   5  unpublishable   -- outside the work tree entirely; leak-safe, but the publisher cannot find it
+_retain_resolved="$(realpath -m -- "$RUN_ROOT")"
+_retain_expected="$(realpath -m -- "$_retain_model_root/runs")"
+if [[ "$_retain_resolved" != "$_retain_expected" ]]; then
+  _retain_worktree_root="$(git -C "$_retain_model_root" rev-parse --show-toplevel 2>/dev/null || true)"
+  echo "config.sh: RUN_ROOT=$RUN_ROOT resolves to $_retain_resolved, not $_retain_expected." >&2
+  if [[ -n "$_retain_worktree_root" && "$_retain_resolved" == "$_retain_worktree_root"/* ]]; then
+    echo "  This is inside the work tree but outside the ignored model runs/, so run output would land" >&2
+    echo "  where .gitignore does not cover it and the command-args files carry" >&2
+    echo "  external_meds_dir/external_labels_dir. No convention in this fleet permits it." >&2
+    _retain_status=4
+  else
+    echo "  This is outside the work tree, which is leak-safe, but scripts/github-sync.sh hardcodes" >&2
+    echo "  runs/<run-id> and would abort with 'refusing to publish an incomplete run' against a run" >&2
+    echo "  that completed. It becomes the intended configuration once that publisher resolves" >&2
+    echo "  RUN_ROOT; it is not usable before then." >&2
+    _retain_status=5
+  fi
+  echo "  The default is currently the only working configuration: unset RUN_ROOT and re-run." >&2
   echo "  (Running submit.sh from another directory is fine -- RUN_ROOT anchors to this model.)" >&2
-  exit 2
+  exit "$_retain_status"
 fi
 
 # Tokenising a full MEDS extract is a streaming pass over every shard, so `preprocess_data` is the CPU

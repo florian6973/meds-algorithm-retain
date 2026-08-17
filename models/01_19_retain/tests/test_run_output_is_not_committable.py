@@ -261,16 +261,19 @@ def test_a_run_root_the_publisher_cannot_reach_is_refused(tmp_path):
             "PATH": f"{ROOT / '.venv' / 'bin'}{os.pathsep}{os.environ['PATH']}",
         },
     )
-    assert result.returncode != 0
+    assert result.returncode == 5, "an off-tree override is leak-safe but unpublishable"
     # The message is asserted, not just the exit status. A guard that refuses correctly and then
     # misdirects costs more than no guard, and the remedy here is counter-intuitive: the fix is to stop
     # setting RUN_ROOT, not to set it somewhere better, because no value both stores output off-checkout
     # and lets the publisher find it.
-    assert "resolves outside" in result.stderr
     assert "unset RUN_ROOT" in result.stderr, "the guard must say what to do, not only what is wrong"
-    assert "external_meds_dir" in result.stderr, "it must name what would leak"
+    # This case is leak-safe, so the message must name the failure it *does* cause -- a completed run the
+    # publisher reports as incomplete -- rather than the leak, which belongs to the in-tree case.
     assert "refusing to publish an incomplete run" in result.stderr, (
-        "it must name the other failure mode, which reports a misleading cause"
+        "it must name the failure mode this override actually produces, which reports a misleading cause"
+    )
+    assert "external_meds_dir" not in result.stderr, (
+        "an off-tree root does not leak; naming the leak here would misdescribe the refusal"
     )
     # It must not blame the working directory, which is the anchored and therefore correct route.
     assert "wrong directory" not in result.stderr
@@ -386,8 +389,7 @@ def test_an_explicit_relative_run_root_is_still_refused_from_the_worktree_root(t
     """
     worktree_root = ROOT.parents[1]
     result, _ = _dry_run_args_paths(worktree_root, RUN_ROOT="runs")
-    assert result.returncode != 0, "a repo-root-relative RUN_ROOT must not be accepted"
-    assert "resolves outside" in result.stderr
+    assert result.returncode == 4, "a repo-root-relative RUN_ROOT resolves in-tree, so it would leak"
 
     accepted, paths = _dry_run_args_paths(ROOT, RUN_ROOT="runs")
     assert accepted.returncode == 0, accepted.stderr
@@ -463,9 +465,22 @@ def test_the_mode_guard_detects_a_link_that_arrived_without_anyone_linking(tmp_p
     )
 
 
-def _publisher_follows_run_root() -> bool:
-    """Whether this port's publisher can find a run at a relocated `RUN_ROOT`."""
-    return "RUN_ROOT" in (ROOT / "scripts" / "github-sync.sh").read_text()
+def _publisher_can_publish_a_relocated_run() -> bool:
+    """Whether this port's publisher can actually publish a run stored outside the checkout.
+
+    A **conjunction**, deliberately. Resolving `RUN_ROOT` is not sufficient: `git add` refuses a path
+    outside the repository (exit 128, "is outside repository"), so a resolve-only publisher fails at
+    exactly the same point as the hardcode it replaced. It must also copy the evidence into the
+    checkout's `runs/<id>/`, dereferencing as it goes -- `cp -R` preserves symlinks and would stage a
+    host path as blob content.
+
+    Keying the relaxation on "mentions RUN_ROOT" would demand relaxing the guard for a publisher that
+    still cannot publish, which is the trapdoor this test exists to close, in executable form.
+    """
+    text = (ROOT / "scripts" / "github-sync.sh").read_text()
+    resolves_run_root = "RUN_ROOT" in text
+    dereferences_on_copy = re.search(r"\bcp\s+-[A-Za-z]*L\b", text) is not None
+    return resolves_run_root and dereferences_on_copy
 
 
 def test_a_run_root_inside_the_work_tree_but_elsewhere_is_always_refused(tmp_path):
@@ -479,11 +494,12 @@ def test_a_run_root_inside_the_work_tree_but_elsewhere_is_always_refused(tmp_pat
     """
     inside_but_elsewhere = ROOT.parents[1] / "scratch-runs"
     result, _ = _dry_run_args_paths(ROOT, RUN_ROOT=str(inside_but_elsewhere))
-    assert result.returncode != 0, (
+    assert result.returncode == 4, (
         f"RUN_ROOT={inside_but_elsewhere} is inside the work tree and outside the ignored model runs/; "
-        "it must be refused under either convention"
+        f"it must be refused under either convention with the would-leak status 4, got {result.returncode}"
     )
-    assert "resolves outside" in result.stderr
+    assert "No convention in this fleet permits it" in result.stderr
+    assert "external_meds_dir" in result.stderr, "the leaking case must name what would leak"
 
 
 def test_off_tree_acceptance_tracks_this_ports_publisher(tmp_path):
@@ -500,13 +516,23 @@ def test_off_tree_acceptance_tracks_this_ports_publisher(tmp_path):
     convention, since the in-tree-elsewhere case above would stop being refused.
     """
     result, _ = _dry_run_args_paths(ROOT, RUN_ROOT=str(tmp_path / "off-tree-runs"))
-    if _publisher_follows_run_root():
+    if _publisher_can_publish_a_relocated_run():
         assert result.returncode == 0, (
-            "scripts/github-sync.sh resolves RUN_ROOT, so an off-tree run root is the intended "
-            "configuration and the guard should no longer refuse it"
+            "scripts/github-sync.sh both resolves RUN_ROOT and dereferences on copy, so an off-tree run "
+            "root is now publishable and is the intended configuration; the guard should no longer "
+            "refuse it -- while still refusing the in-tree-elsewhere case, which is asserted separately "
+            "and must survive this relaxation"
         )
     else:
-        assert result.returncode != 0, (
-            "scripts/github-sync.sh hardcodes runs/<run-id>, so an off-tree run root would complete and "
-            "then fail to publish; the guard must refuse it until the publisher can follow it"
+        # Status 5, not merely non-zero: the two refusals are different policies and a survey reading
+        # only the status must distinguish "would leak" from "leak-safe but unpublishable".
+        assert result.returncode == 5, (
+            f"expected the unpublishable status 5, got {result.returncode}.\n"
+            f"  THIS port's {ROOT / 'scripts' / 'github-sync.sh'} cannot yet publish a relocated run.\n"
+            "  Relaxing requires ALL of: (a) it resolves RUN_ROOT, (b) it dereferences on copy -- `git "
+            "add` refuses an out-of-repo path at exit 128, so resolving alone fails where the hardcode "
+            "did, and `cp -R` would stage a symlink with the host path as its content -- and (c) the "
+            "relaxation keeps refusing an in-tree-elsewhere RUN_ROOT (exit 4), the case that leaks and "
+            "that no convention permits.\n"
+            "  Another port having such a publisher is not this condition; the anchor is this file."
         )

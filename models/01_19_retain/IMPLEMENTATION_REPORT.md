@@ -703,24 +703,40 @@ them out and pays for it by needing dereferencing publication plus the mode asse
 The decisive factor for choosing it here is that **this port's** `scripts/github-sync.sh` — the 29-line
 template version — hardcodes `result_dir="runs/$run_id"` and never reads `RUN_ROOT`. **This invariant is
 the one compatible with the publisher this port actually ships.** Another port has since built a publisher
-that resolves `RUN_ROOT`, dereferences on copy and skips the self-copy; when that lands here, the stricter
-invariant becomes a divergence rather than a safeguard and this guard should be relaxed to match.
+that resolves `RUN_ROOT`, dereferences on copy and skips the self-copy.
+
+**The relaxation condition, stated as one conjunction so no part of it can be reached without the rest:**
+this guard may be relaxed *only when* this port's `scripts/github-sync.sh` **both** resolves `RUN_ROOT`
+**and** dereferences on copy, **and** the relaxation retains the refusal of an in-tree-elsewhere
+`RUN_ROOT` (exit 4). Resolving alone is not sufficient — `git add` refuses a path outside the repository at
+exit 128, so a resolve-only publisher fails at exactly the same point as the hardcode it replaced — and
+dropping the in-tree refusal would be worse than either convention, since that is the case that leaks and
+neither convention permits it.
 
 Adopting that conclusion from another port's file, while this port's publisher still hardcodes the path,
 would recreate exactly the failure the guard exists to prevent — a completed run that cannot be published.
 So the reconciliation is coupled mechanically rather than left as a remembered intention:
 `test_off_tree_acceptance_tracks_this_ports_publisher` refuses an off-tree `RUN_ROOT` while the publisher
-hardcodes, and requires it to be *accepted* once the publisher resolves `RUN_ROOT`. The assertion flips
-itself; nobody has to remember.
+hardcodes, and requires it to be *accepted* only once the publisher satisfies the full conjunction above.
+The assertion flips itself; nobody has to remember. Its predicate is a conjunction for the same reason the
+prose is: keying it on "mentions `RUN_ROOT`" would demand relaxing the guard for a resolve-only publisher
+that still cannot publish — the trapdoor in executable form.
 
 **Relaxing is not becoming permissive, and that distinction is the whole of it.** The target invariant is
 three-way, not binary:
 
-| `RUN_ROOT` | under either convention |
-|---|---|
-| fully outside the git work tree | refused today; **accepted** once the publisher can follow it |
-| `<model>/runs` (the default) | accepted |
-| **anything else inside the work tree** | **refused, always** |
+| `RUN_ROOT` | verdict | exit |
+|---|---|---|
+| `<model>/runs` (the default) | accepted | 0 |
+| **anything else inside the work tree** | **refused, always** — would leak | **4** |
+| fully outside the git work tree | refused today, **accepted** once the publisher both resolves `RUN_ROOT` and dereferences on copy | **5** |
+
+The two refusals exit with **distinct** codes because they are different policies, and each message names
+only the failure its own case causes — the in-tree message names `external_meds_dir`, the off-tree one
+names the publisher aborting on a completed run. Conflating them is not hypothetical: "all five ports
+refuse" was stated across this fleet while two different invariants were in use, and a survey reading exit
+status alone could not have told them apart. The codes match BEHRT's so a fleet-wide survey is comparable
+without reading anyone's prose.
 
 The middle row is the dangerous one — run output inside the work tree at a path the ignore rules do not
 cover, so the `command-args` files sit unignored — and no convention in the fleet permits it. Lifting a
@@ -913,10 +929,11 @@ epochs, and 9% of its keys are scored at the intercept. The validation AUC recor
    | **MIMIC-IV demo cohort, official defaults, 10 epochs** | 3 | 0/3 pairs | 0/3 pairs | `0.000e+00` |
    | single-trial sweep: widths 16-256, epochs 3-50, 66-1,637 keys (10 configurations) | 1 each | 0/10 | 0/10 | `0.000e+00` |
 
-   Pooling the multi-trial conditions gives 12 independent comparisons with zero divergences. That
-   **excludes a divergence rate comparable to the sibling ports** (`P(0/12 | rate 2/3) = 1.9e-06`) but
-   leaves the 95% upper bound on a rare divergence at **22%** — a 5% rate would still produce this result
-   54% of the time. The defensible claim is therefore *"RETAIN does not diverge at a rate comparable to
+   Pooling the **four** multi-trial conditions gives 14 independent comparisons with zero divergences.
+   That **excludes a divergence rate comparable to the sibling ports** (`P(0/14 | rate 2/3) = 2.1e-07`)
+   but leaves the 95% upper bound on a rare divergence at **19.3%** — a 5% rate would still produce this
+   result 49% of the time. (This figure read 12 comparisons and 22% until the demo-cohort condition was
+   added to the table above and the pooled statistic was not recomputed with it; corrected here.) The defensible claim is therefore *"RETAIN does not diverge at a rate comparable to
    the sibling ports at the conditions reachable here"*, **not** *"RETAIN is deterministic on CUDA"*.
 
    The 1,637-key row bears on the atomics question specifically: many rows reducing into a small
