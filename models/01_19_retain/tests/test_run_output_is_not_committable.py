@@ -104,21 +104,45 @@ def test_github_sync_can_still_stage_its_result(tmp_path):
 
 
 def test_a_careless_add_all_cannot_pick_up_run_inputs(tmp_path):
-    """`git add -A` in a worktree holding a completed run must not stage the dataset paths."""
+    """`git add -A` in a worktree holding a *complete* run must not stage inputs or host paths.
+
+    Asserted as a negative property rather than as an exact staged set. The publishable files are
+    trackable by design, so whether they appear depends only on whether they happen to be committed
+    already -- an exact-set assertion would encode this repository's commit history and go red on a fresh
+    checkout holding a completed-but-unpublished run. That is a false red of the kind usually "fixed" by
+    loosening the assertion until it stops meaning anything.
+
+    The property that matters is that nothing carrying run *inputs* is staged, and that no host dataset
+    path reaches the index in any file's content.
+    """
+    host_path = "/groups/example/data/MIMIC_MEDS"
     repository = tmp_path / "checkout"
     run = repository / "runs" / RUN_ID
-    (run / "command-args").mkdir(parents=True)
-    (run / "artifacts" / "data").mkdir(parents=True)
+    for directory in ("command-args", "artifacts/data", "logs", "checkpoints", "manifests"):
+        (run / directory).mkdir(parents=True)
     subprocess.run(["git", "init", "-q", str(repository)], check=True)
     (repository / ".gitignore").write_text((ROOT / ".gitignore").read_text())
-    (run / "command-args" / "predict.args").write_text("external_meds_dir=/data/MIMIC_MEDS\n")
+    # A finished run: publishable evidence alongside inputs, artifacts, logs and checkpoints.
+    (run / "spec.yaml").write_text("dataset: {}\n")
+    (run / "result.yaml").write_text("status: complete\n")
+    (run / "manifests" / "predict.yaml").write_text("contract_version: '2'\n")
+    (run / "command-args" / "predict.args").write_text(f"external_meds_dir={host_path}\n")
     (run / "artifacts" / "data" / "shard.parquet").write_bytes(b"\x00")
+    (run / "logs" / "driver.log").write_text(f"reading {host_path}\n")
+    (run / "checkpoints" / "model.pt").write_bytes(b"\x00")
 
     subprocess.run(["git", "add", "-A"], cwd=repository, check=True, capture_output=True)
     staged = subprocess.run(
         ["git", "diff", "--cached", "--name-only"], cwd=repository, capture_output=True, text=True
     ).stdout.split()
-    assert staged == [".gitignore"], f"a careless add staged run output: {staged}"
+    for forbidden in ("command-args", "artifacts", "logs", "checkpoints"):
+        assert not any(forbidden in path for path in staged), f"{forbidden} was staged: {staged}"
+
+    # Content, not just paths: the dataset location must not reach the index inside any staged file.
+    content = subprocess.run(
+        ["git", "diff", "--cached"], cwd=repository, capture_output=True, text=True
+    ).stdout
+    assert host_path not in content, "a host dataset path reached the index"
 
 
 def test_slurm_job_logs_are_ignored():

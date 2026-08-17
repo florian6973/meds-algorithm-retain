@@ -564,7 +564,20 @@ rather than adopted wholesale:
   things `github-sync.sh` stages, so anything added under `runs/` later arrives ignored until it is named
   deliberately. `tests/test_run_output_is_not_committable.py` asserts both directions and derives the
   allowlist from the sync script itself so the two cannot drift; verified by mutation that a blanket
-  `runs/` ignore fails the publication direction rather than passing quietly.
+  `runs/` ignore fails the publication direction rather than passing quietly, and that the original
+  enumerating rules fail the exclusion direction.
+
+  The `git add -A` case asserts a **negative** property — no `command-args`, `artifacts`, `logs` or
+  `checkpoints` staged, and no host dataset path present in staged *content* — rather than an exact staged
+  set. The publishable files are trackable by design, so whether they appear depends only on whether they
+  happen to be committed already; an exact-set assertion would encode this repository's commit history and
+  would go red on a fresh checkout holding a completed-but-unpublished run. That is a false red of the
+  kind usually resolved by loosening the assertion until it no longer means anything.
+
+  This defect was present in **all five ports** of the pilot, each having inherited the same enumerating
+  patterns, so it is a template defect rather than five independent mistakes and belongs upstream. The
+  fix is recorded here because this port must not ship with the hole, not because downstream is where it
+  should live.
 - **The PATH requirement is documented in `config.sh`.** Both `submit.sh` and `job.sbatch` call
   `meds-model` by bare name; without the virtualenv on PATH, `submit.sh` prints "No commands declared" on
   the login node — observed directly here while testing `--dry-run`. Since `--export=ALL` is passed,
