@@ -284,7 +284,7 @@ demo cohort and the pinned task only. Run on 2026-08-16.
 
 | Item | Value |
 |---|---|
-| MEDS-DEV revision | `0c21a2226964181dee7ed28c9aa5aa0abdfe9765` (pinned by `tests/integration.py`) |
+| MEDS-DEV revision | `0c21a2226964181dee7ed28c9aa5aa0abdfe9765` — **verified at run time**, not assumed; printed by both preparers and confirmed in the gate output |
 | Dataset | MIMIC-IV demo, `dataset_version` `3.1:0.1.0`, ETL `MEDS_transforms` 0.6.2, MEDS 0.4.1 |
 | Task | `mortality/in_icu/first_24h`, `sha256:7925b00c16d2496f8a4c25068814a5fe6ad6904436eaa2f1a23c1f699727a2a2` |
 | MIMIC-IV predicates | `sha256:f51853db0b44b216f81255a475893197018b569fec5fcc17e5505ffdbd5b301d` — located and asserted present by the test, **not consumed by any command** |
@@ -407,6 +407,40 @@ import — so these are default non-deterministic kernels. Three trials per devi
 hyper-parameters: **CPU 0/3 pairs diverged, CUDA 0/3 pairs diverged, worst `0.000e+00`**. The CPU result is
 the load-bearing one; the CUDA figure is context about this hardware at this regime (GB10, 74 keys, 10
 epochs, embed 128) and is not a claim of GPU bit-reproducibility.
+
+### The revision pin is verified rather than assumed
+
+`provision_meds_dev` pins the MEDS-DEV revision only on the branch that clones from the URL:
+
+    run([git, "clone", source or MEDS_DEV_URL, checkout], ...)
+    if source is None:
+        ref = os.environ.get("MEDS_DEV_REF", MEDS_DEV_PREDICATES_REF)
+        run([git, "-C", checkout, "checkout", "--detach", ref], ...)
+
+Supplying `MEDS_DEV_DIR` takes the other branch, so the checkout arrives at whatever the source's HEAD
+happens to be and is never pinned. The assertion that follows,
+`assert_meds_dev_predicates_capability`, tests that the predicates passthrough is *present*, so a newer
+revision still carrying it passes — a capability check, not a revision check, despite the name. A gate run
+against an unpinned MEDS-DEV is not the gate it reports being.
+
+`tests/e2e.py::resolved_meds_dev_revision` closes that. It is anchored on **the provisioned clone**, which
+is what is actually installed and executed, rather than on `MEDS_DEV_DIR`, which is only the source it was
+copied from. That single anchor covers both provisioning paths; a `MEDS_DEV_DIR`-only check would be silent
+on the URL path. Both preparers call it and print the SHA, so the revision appears in gate output whether or
+not anyone reads the assertion. `tests/integration.py` is not edited and stays byte-identical across the
+fleet.
+
+`tests/test_meds_dev_pin.py` exercises the guard against real git checkouts rather than mocks, because a
+guard that silently passes is the same class of defect as the check it replaces: a wrong HEAD is refused
+with both revisions named, an explicit `MEDS_DEV_REF` override is honoured, a branch or tag is resolved
+rather than string-compared, a non-git directory fails loudly instead of returning something plausible, and
+with no override the expectation is `tests/integration.py`'s own pin rather than a local default.
+
+**The guard is only as strong as its expected value.** Setting `MEDS_DEV_REF` to silence a failure rather
+than to make a deliberate revision change would turn it into a rubber stamp. Nothing here can prevent that;
+printing the resolved SHA into gate output is the mitigation, so the revision a run used is recoverable from
+the output rather than from the assertion having passed. Every gate reported above ran at
+`0c21a2226964181dee7ed28c9aa5aa0abdfe9765` with no override set.
 
 ### A defect found in the shared scaffold, not in this model
 

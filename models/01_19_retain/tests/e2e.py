@@ -107,6 +107,54 @@ def run_e2e(tmp_path, **inputs):
     )
 
 
+def resolved_meds_dev_revision(meds_dev):
+    """Return the MEDS-DEV revision actually provisioned, refusing anything but the pinned one.
+
+    `provision_meds_dev` pins the revision only on the branch that clones from the URL::
+
+        run([git, "clone", source or MEDS_DEV_URL, checkout], ...)
+        if source is None:
+            ref = os.environ.get("MEDS_DEV_REF", MEDS_DEV_PREDICATES_REF)
+            run([git, "-C", checkout, "checkout", "--detach", ref], ...)
+
+    Supplying `MEDS_DEV_DIR` takes the other branch, so the checkout is cloned at whatever the source's
+    HEAD happens to be and never pinned. The assertion that follows it,
+    `assert_meds_dev_predicates_capability`, checks that the predicates passthrough is *present*; a newer
+    `main` still carrying it passes. That is a capability check, not a revision check, despite the name.
+
+    A gate run against an unpinned MEDS-DEV is not the gate it reports being, so this turns the difference
+    into an error and returns the SHA for the record. `MEDS_DEV_REF` overrides the expectation, matching
+    what `provision_meds_dev` itself honours, so a deliberate revision change stays possible and explicit.
+
+    `tests/integration.py` is byte-identical across the fleet and is not edited to achieve this.
+    """
+    import subprocess
+
+    from .integration import MEDS_DEV_PREDICATES_REF
+
+    def git(*args):
+        return subprocess.run(
+            ["git", "-C", str(meds_dev), *args], capture_output=True, text=True
+        )
+
+    head = git("rev-parse", "HEAD")
+    if head.returncode:
+        raise AssertionError(f"{meds_dev} is not a git checkout: {head.stderr.strip()}")
+    head = head.stdout.strip()
+
+    expected = os.environ.get("MEDS_DEV_REF", MEDS_DEV_PREDICATES_REF)
+    resolved = git("rev-parse", f"{expected}^{{commit}}")
+    target = resolved.stdout.strip() if resolved.returncode == 0 else expected
+    if head != target:
+        raise AssertionError(
+            f"MEDS-DEV is at {head}, not the pinned {target}. `provision_meds_dev` only pins when it "
+            "clones from the URL, so a checkout supplied through MEDS_DEV_DIR arrives at its own HEAD; "
+            "the capability assertion does not catch that because a newer revision still carries the "
+            "predicates passthrough. Set MEDS_DEV_REF to change the pin deliberately."
+        )
+    return head
+
+
 def prepare_meds_dev_run(meds_dev, tmp_path):
     """Return ``MEDSDevRun(args, predictions_dir, labels_dir, splits)`` for this implementation.
 
@@ -119,9 +167,9 @@ def prepare_meds_dev_run(meds_dev, tmp_path):
     ``{predicates_path}`` slot to populate.
     """
     tmp_path = Path(tmp_path)
+    print(f"MEDS-DEV revision: {resolved_meds_dev_revision(meds_dev)}")
     meds_dir, labels_dir = prepare_fixture(tmp_path / "fixture")
     output_dir = tmp_path / "meds-dev-run"
-    del meds_dev
 
     arguments = [
         f"dataset_dir={meds_dir}",
@@ -163,6 +211,7 @@ def prepare_mimic_demo(meds_dev, tmp_path):
     """
     from .integration import RUN_TIMEOUT, run, venv_bin
 
+    print(f"MEDS-DEV revision: {resolved_meds_dev_revision(meds_dev)}")
     configured = os.environ.get("MEDS_DEMO_DIR")
     dataset_dir = Path(configured).resolve() if configured else tmp_path / "mimic-iv-demo"
     if not configured:
