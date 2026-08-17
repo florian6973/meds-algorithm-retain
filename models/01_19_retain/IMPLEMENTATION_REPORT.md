@@ -670,6 +670,51 @@ One point from that brief needed no change: the vocabulary is built from the **d
 choice — a metadata sidecar may enumerate more, fewer, or different codes than the events contain, so the
 events are the authority. This port contains no reference to that file.
 
+### The documented full-data procedure sets a `RUN_ROOT` this port refuses
+
+`DGX_AGENTIC_WORKFLOW.md` section 10 prescribes `MODEL_RUN_ROOT=/shared/meds-model-runs/<model>` and
+exports it as `RUN_ROOT` before `./slurm/submit.sh`. That is an off-checkout run root, and this port's
+guard **refuses it** — deliberately, because `scripts/github-sync.sh` hardcodes `result_dir="runs/$run_id"`
+and never reads `RUN_ROOT`, so such a run would complete and then fail to publish with an error naming the
+run rather than the configuration.
+
+**This will be hit by anyone following the documented procedure**, and the refusal is the correct
+behaviour: it converts a publication failure discovered hours later into an explained refusal at submit
+time. The message names both failure modes and states the remedy, which is to leave `RUN_ROOT` unset.
+
+The underlying conflict is not resolvable inside this model directory: the workflow document and the
+publisher disagree, and the publisher is template-owned. It is recorded here so the full-data gate is not
+the moment it is discovered. Two documents propagated this class of defect across the fleet rather than
+five ports independently choosing wrong — the other being `docs/CLUSTER.md`'s `cp -r`, which preserves the
+symlinks the `100644` assertion exists to catch.
+
+### How the local gate is actually run
+
+Recorded because the invocation is part of the evidence. The gate is run **unpiped, reading `$?`
+directly**:
+
+    uv run pytest -rs -q > "$LOG" 2>&1; STATUS=$?
+
+Piping the command under test into `tail` or `head` reports the *pager's* exit status, not pytest's.
+Measured here: `pytest -k <no match>` gives pipeline `0` where pytest exits `5`, and a collection error
+gives pipeline `0` where pytest exits `2`. Reading the printed summary catches both, but that is vigilance
+rather than a gate, and a pytest that dies without printing a summary would defeat it.
+
+`${PIPESTATUS[0]}` is *not* the remedy used here, because it has a form that fails silently and is the
+form a careful person writes. Measured:
+
+| form | reported |
+|---|---|
+| `false \| tail -1` then `${PIPESTATUS[0]}` | `1`, correct |
+| `out=$(false \| tail -1)` then `${PIPESTATUS[0]}` | **`0`, wrong** — it describes the assignment |
+| `out=$(false \| tail -1; exit "${PIPESTATUS[0]}")` | `1`, correct |
+| `false > "$f" 2>&1` then `$?` | `1`, correct |
+
+The command substitution runs its pipeline in a subshell that no longer exists when the variable is read.
+Writing to a file and reading `$?` has no positional dependency to get wrong, which is why it is the form
+used: this class of error has recurred through the pilot despite being documented, so the durable fix is a
+mechanical form rather than a rule to remember at the moment of writing.
+
 ### A known flaky test that must not be re-run until green
 
 `tests/test_operations.py::test_slurm_dry_run_is_non_mutating` snapshots `ROOT.rglob("*")` before and
