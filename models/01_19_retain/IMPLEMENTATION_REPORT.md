@@ -534,42 +534,68 @@ single file per split, which is the worst case. Re-sharding the identical 16.4M-
 
 Same data, same work, same wall time; a 5.9x memory reduction from sharding alone. The empirical rule is
 
-> ~~peak RSS ~ 1 GB baseline + ~0.5 KB per row of the largest shard~~ — **FALSIFIED on real data.**
+> peak **process-tree** RSS ~ 1 GB baseline + ~0.5 KB per row of the largest shard
 
-which held to within +/-20% across all three points **and was wrong by 3.1x the first time it met a real
-MIMIC-IV extract.** Measured on the cluster: the largest real shard is 3,206,908 rows and
-`preprocess_data` used **MaxRSS 7.44 GiB** against the rule's predicted 2.6 GB.
+which held to within +/-20% across all three points above.
 
-| Source of the shard | Rows | Peak RSS | Bytes/row above a 1 GB baseline |
-|---|---:|---:|---:|
-| pure synthetic (fresh generator) | 2,000,000 | 0.8-1.2 GB | **-100 to +133** |
-| replicated real demo cohort | 1.1M / 2.65M / 14.4M | 1,357 / 2,285 / 7,968 MB | **384 / 526 / 511** |
-| **real MIMIC-IV extract** | **3,206,908** | **7,614 MB** | **2,178** |
+**A falsification recorded here in `2e36e49` is withdrawn: the comparison was invalid.** I recorded that
+the rule was wrong by 3.1x on first contact with a real MIMIC-IV extract, from a `sacct` MaxRSS of
+7.44 GiB against the rule's predicted 2.6 GB. Those two numbers do not measure the same quantity.
+`src/meds_model_contract/manifest.py:73-88` sums `Rss` from `/proc/<pid>/smaps_rollup` across the process
+tree, counting pages **mapped into the address space**; `sacct` MaxRSS under `jobacct_gather/cgroup`
+reports the **cgroup's** charge, which includes page cache accumulated by a stage streaming a 19 GB
+extract. All three fitted points came from that sampler. Comparing them against a cgroup figure was
+apples-to-oranges, and this half of the conclusion is void **independently of what the true value is** —
+that follows from my own code and needed no cluster access to establish.
 
-**The variable is right and the coefficient is worthless.** Memory plainly did not scale with the 881M-row
-dataset — 7.44 GiB for an extract that size is only explicable if the largest shard governs. But the
-per-row coefficient varies about 20x across data regimes at comparable row counts, so it cannot be fitted
-on anything but the real thing.
+**Provenance, which is the part worth keeping.** Both the 7.44 GiB and its replacement were *transcribed
+to me by another session*. `/groups/...` is not reachable from this machine; I have read neither manifest.
+I recorded the first as a measured falsification anyway, rewrote the rule on it, and ran two sweeps
+hunting the cause of a gap that did not exist. My own provenance rule — mark every number measured, read,
+or transcribed — would have caught it, and I failed to apply it to a number that arrived as bad news. An
+unwelcome finding got a *lower* evidentiary bar than a welcome one would have, which is exactly backwards.
 
-**Why the +/-20% was never evidence.** All three fitted points came from one generator. Their agreement
-with each other measured the generator's self-consistency, not the rule's accuracy — the same shape as
-every other defective check recorded here, where the instrument could not observe what it was cited for.
+| Corrected figures — all `[T]` transcribed, none verified here | | |
+|---|---|---|
+| `preprocess_data` process-tree RSS | **1.55 GiB** `[T]` | what this rule models |
+| `preprocess_data` cgroup MaxRSS | 7.44 GiB `[T]` | what the OOM killer enforces |
+| gap between the two instruments | **4.8x** | the margin a `--mem` request must absorb |
 
-Two candidate explanations were measured and **excluded**, rather than left as plausible stories: code
-cardinality and string width account for at most ~133 B/row (7k vs 100k distinct codes, 12- vs 40-char
-strings), and event clustering — many events sharing a `(subject, time)` group, as real ICU data does —
-moves it not at all. Parquet row-group layout as written by `MEDS_transforms` remains untested, because
-reproducing it needs a real full-extract shard that is not available here. **The cause is unresolved and
-is recorded as unresolved.**
+**What the corrected number supports, and what it does not.** Against 3,206,908 rows the rule predicts
+2.60 GB and the reported figure is 1.66 GB, so it **overpredicts the total by 1.56x, in the safe
+direction**. But that total is flattered by a baseline term that happens to be about right. The implied
+coefficient is ~207 B/row above a 1 GB baseline (~184 B/row above 1 GiB) against 500 B/row predicted, so
+**the coefficient overpredicts by ~2.4x** — and ~200 B/row sits *below* the 384-526 B/row band the
+replication fitted, not inside it. The sibling session's summary reads it as "comfortably inside" that
+band; it is not, and the difference decides things, because *the rule is accurate on real data* and *the
+rule is conservative on real data by an unmeasured factor* license different `--mem` choices. Real ICU
+data is **cheaper** per row than the replicated demo, not equivalent to it.
 
-Practical guidance, replacing the rule: size `MEMORY` from the **measured real coefficient of ~2.2 KB per
-row of the largest shard**, with margin, and treat any synthetic-fitted coefficient as inapplicable. For
-this extract that is ~7.4 GiB against a 64 G default — comfortable, and nothing needed changing. The
-danger was never this run: it was that someone sizing *from the rule* would have read 2.6 GB, chosen 4 G
-as a 50% margin, and been OOM-killed. A full MIMIC-IV extract sharded at MEDS-DEV's usual
-granularity should therefore sit in single-digit GB regardless of total size, and **the number to check
-before submitting is the row count of the largest shard, not the size of the dataset**. If the extract has
-few, very large shards, the mitigation is re-sharding the input, not more RAM.
+So: **the variable is right, the direction is safe, and the coefficient is still not accurate.** Use it as
+an upper bound, never as an estimate.
+
+**Size `--mem` on the cgroup figure, not on this rule.** The rule models the algorithm's working set; the
+OOM killer counts the cgroup, 4.8x larger here. Sizing `--mem` straight from the rule would have picked
+~4 G for a job the scheduler measured at 7.44 GiB and killed it. That is the same practical danger
+recorded before the retraction, reached by a different route and still real. `MEMORY=64G` remains
+comfortable; nothing needs changing.
+
+**What stands unchanged.** The shard-geometry result — 5.9x memory reduction from re-sharding the
+identical dataset, at 1.4x wall-time variation across a 64x range — was measured here and is untouched.
+So is *no cross-port resource figure is transferable*: the fleet spread on this one stage is an order of
+magnitude (RETAIN 1.55 GiB to DuETT 28.86 GiB `[T]`). What I withdraw is the stronger claim I added under
+the falsification — *no synthetic-fitted figure transfers to real data*. This one did transfer, in the
+safe direction. The narrower statement the evidence supports: a synthetic-fitted **coefficient** transfers
+only as a bound, because the generator cannot produce the data regime it is extrapolated into.
+
+The "unresolved 2,178 B/row gap" is struck; there was no gap. The cardinality and string-width sweeps that
+chased it were aimed at a phantom. Their results are retained — cardinality and string width account for
+at most ~133 B/row, and event clustering moves it not at all — because they were measured here and remain
+true, but they no longer explain anything that requires explaining.
+
+**The number to check before submitting is still the row count of the largest shard, not the size of the
+dataset.** If the extract has few, very large shards, the mitigation is re-sharding the input, not more
+RAM.
 
 ### What this measurement does not cover
 
