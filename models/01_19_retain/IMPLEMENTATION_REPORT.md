@@ -665,6 +665,23 @@ rather than adopted wholesale:
   submit-time PATH is what the compute node inherits, so a submission made without it queues and then
   fails after the wait.
 
+**Update the model's own worktree; never `git checkout` in the shared repository.** The first command
+block sent for the full-data run said `git -C "$REPO" checkout <sha>` against
+`/groups/.../Git/meds-models`. That repository is on `master` and owns five linked worktrees, one per
+port, so checking out a commit there detaches the shared main working tree for no gain — this port's
+worktree already exists and its branch is already at the target. The correct form is a fast-forward in the
+port's own worktree:
+
+    WT="$REPO/.claude/worktrees/01_19_retain"
+    git -C "$WT" fetch --prune origin
+    git -C "$WT" merge --ff-only origin/model/01_19_retain
+    test -z "$(git -C "$WT" status --porcelain)"
+    cd "$WT/models/01_19_retain"
+
+It would not have corrupted the worktrees, which carry their own HEADs, but it mutates state other
+sessions read. Caught by `meds-model-cluster` before execution; recorded here rather than only in that
+exchange, because a runbook step that only exists in a message is a step the next person will not have.
+
 One point from that brief needed no change: the vocabulary is built from the **data shards**, never from
 `metadata/codes.parquet`. That is not a reaction to any report about that file's contents but a structural
 choice — a metadata sidecar may enumerate more, fewer, or different codes than the events contain, so the
