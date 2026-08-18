@@ -914,6 +914,39 @@ numbers will be written here once they can be derived from `predictions.parquet`
 directly. Until then this row reads "not yet" rather than carrying figures whose provenance would be a
 message.
 
+## Counting baseline: pre-registered before the number exists
+
+`scripts/counting-baseline.py` asks how much of this model's discrimination is available from **counting
+visits alone, reading no codes**. Method taken from `model/01_01_teco`'s script by reading it, not from its
+description; only the unit differs — visits here, 15-minute bins there, coded events for the tabular
+baseline. Built and exercised end to end; **not yet run against the full-data artifacts**, which are on the
+cluster and unreachable from this machine.
+
+The predictions below are recorded *now*, before the numbers exist, because a prediction made afterwards is
+worth much less:
+
+- **`presence` is likely degenerate on this bundle.** An empty history arises only when a prediction time
+  precedes a subject's *entire* modelled record, and these tasks appear to anchor on an event of the
+  subject. If so `presence` is identically 1, and the three strata collapse to one row.
+- **If that happens, all-keys and non-empty will coincide — and that coincidence must not be read as
+  agreement with TECO**, whose two figures do not coincide because its empty stratum is a
+  demographics-only submodel rather than a constant. Identical numbers arising from an absent stratum and
+  identical numbers arising from a matching stratum are different facts.
+- **A degenerate `presence` makes this the strictest of the three instruments**, not the weakest: the count
+  would then be pure measurement intensity with no cohort-separation component, measured without filtering
+  and without needing a specially chosen dense task. If it still recovers a large fraction of the model,
+  that is a stronger result on the counting question than either route currently available, and should be
+  reported as such rather than as one more row. This framing is the analysis session's, recorded here
+  rather than paraphrased later.
+
+**A correction to my own claim, recorded because the corrected version is what will be written up.** I
+described the existing counting evidence as *three* independent routes. It is **two**: the tabular baseline
+on the bundle with empty keys filtered out, and TECO on a dense task where there are none to filter. The
+degenerate-`presence` control is not a third route — it is what makes the second airtight, by ruling out a
+cohort-separation component by construction rather than by measurement. Folding it in would count one task
+twice. This port's result would be the genuine third, and it can still disagree; that is the reason to run
+it rather than to assume it.
+
 ## Review gates
 
 | Gate | Evidence reviewed | Reviewer/approval | Date or reference |
