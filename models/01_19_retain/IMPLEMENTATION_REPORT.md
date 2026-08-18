@@ -232,7 +232,7 @@ place.
 | Local | `uv run pytest -rs` | 72 passed, 2 skipped, 0 failed. **0 `model_stub` skips** | Real three-command model profile on the synthetic fixture. 66/66 requested keys covered exactly, keys unique, prediction schema aligned by `meds_evaluation.PredictionSchema` |
 | MEDS-DEV | `uv run pytest -m meds_dev -rs` | 1 passed, 53 deselected, 0 skipped, 0 failed | `meds-dev-model model=retain mode=full dataset_type=supervised` in MEDS-DEV's own isolated venv (torch 2.13.0 and `retain 0.1.0` installed there from `requirements.txt`). 13/13 `held_out` keys covered exactly |
 | MIMIC-IV demo | `uv run pytest -m real_data -rs` | 1 passed, 67 deselected, 0 skipped, 0 failed | Full model profile on the MEDS-DEV MIMIC-IV demo and the pinned `mortality/in_icu/first_24h` task. 6/6 `held_out` keys covered exactly, keys unique, schema aligned |
-| Full MIMIC-IV | not run | not run | Blocked pending a separate human approval after the demo gate |
+| Full MIMIC-IV | `./slurm/submit.sh` per task, ten tasks | executed at run SHA `54a8f31` | **Results not yet in this report.** Per-task AUROC/AUPRC exist and are held by the analysis session (issue #7); they are deliberately not transcribed here — see below |
 
 The two skips in the local run are `tests/test_meds_dev_e2e.py` and `tests/test_mimic_demo_e2e.py`, both
 reported by `-rs` as `select -m meds_dev or -m real_data, or set MEDS_DEV_DIR`. They are the marker-gated
@@ -895,6 +895,24 @@ sees green learns "re-run until green", which is precisely how a real intermitte
 This is the same lesson as the CUDA determinism work in limitation 8, where a single passing run was shown
 to be one sample rather than a measurement. If this test fails, check for a concurrent run under `runs/`
 before re-running it, and record that as the cause rather than the green retry.
+
+### Why the full-data results are not transcribed from the analysis session
+
+The analysis session holds per-task AUROC/AUPRC for all ten tasks, measured from this run's
+`artifacts/predict`. They are not copied into this report, and the reason is not caution about their
+arithmetic.
+
+That session runs a **report-reproduction check**: a model's prose report must match its artifact-derived
+numbers at the precision the report prints. If this report were populated *from* that session's table, the
+check would compare its own numbers against themselves and pass unconditionally. **The check has value
+only where the two derivations are independent**, so transcribing would quietly convert a real
+verification into a tautology — the same defect as every instrument in this report that could not observe
+what it was cited for.
+
+The artifacts live on the cluster (`/groups/...`), which is not reachable from this machine, so the
+numbers will be written here once they can be derived from `predictions.parquet` and the run manifests
+directly. Until then this row reads "not yet" rather than carrying figures whose provenance would be a
+message.
 
 ## Review gates
 
