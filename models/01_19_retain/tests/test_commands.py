@@ -328,3 +328,48 @@ def test_training_learns_a_separable_signal():
     assert history.train_losses[-1] < history.train_losses[0]
     assert roc_auc(validation_labels, score(model, validation_batch, config, torch.device("cpu"))) > 0.9
     assert history.selected_by == "validation_auc"
+
+
+def test_every_empty_history_key_receives_the_same_constant_prediction(dataset, tmp_path):
+    """The empty stratum is a *constant*, not a reduced model — verified, not inferred from the code.
+
+    This matters for how a counting-baseline decomposition is read. A sibling port keeps a demographics
+    path alive on an empty window, so its empty stratum is a demographics-only submodel and can show real
+    within-stratum discrimination. This port excludes static (`time = null`) events and the MEDS standard
+    markers, so an empty history leaves no input at all: `v = 0`, `c = 0`, and every such key receives
+    `sigmoid(b_output)` exactly. Reporting one port's empty stratum as though it were the other's kind
+    would mislead, so the difference is asserted here rather than assumed to match.
+    """
+    predictions_dir = tmp_path / "empty-stratum"
+    COMMANDS["predict"]()(
+        {
+            "input_supervised_model_dir": dataset["model"],
+            "external_labels_dir": dataset["labels"],
+            "output_predictions_dir": predictions_dir,
+            "do_overwrite": True,
+            "device": "cpu",
+        }
+    )
+    import json
+
+    from retain.config import RetainConfig
+    from retain.windows import PatientStore, build_sequences
+
+    written = pl.read_parquet(predictions_dir / "predictions.parquet")
+    store = PatientStore(dataset["data"])
+    config = RetainConfig(**json.loads((Path(dataset["data"]) / "config.json").read_text()))
+    batch = build_sequences(store, written.select("subject_id", "prediction_time"), config)
+
+    probabilities = written.get_column("predicted_boolean_probability").to_numpy()
+    empty = batch.lengths == 0
+    assert empty.sum() > 1, "need at least two empty-history keys for this to mean anything"
+
+    assert len(np.unique(probabilities[empty])) == 1, (
+        "empty-history keys must all receive the identical constant; more than one value means some "
+        "input is still reaching the model when the history is empty"
+    )
+    checkpoint = torch.load(Path(dataset["model"]) / "model.pt", weights_only=True)
+    intercept = 1.0 / (1.0 + np.exp(-float(checkpoint["state_dict"]["w_output.bias"])))
+    assert probabilities[empty][0] == pytest.approx(intercept, abs=1e-6)
+    # And the non-empty keys are not constant, or the comparison above would be vacuous.
+    assert len(np.unique(probabilities[~empty])) > 1

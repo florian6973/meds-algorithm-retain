@@ -336,6 +336,20 @@ default cannot be flipped for apparent safety without that test failing.
 The intercept fallback itself remains **unexercised on real data**: it is covered by unit tests and by the
 synthetic fixture, and the demo produced no key that needed it.
 
+**The empty stratum is a constant, and that is verified rather than inferred from the code.** Measured:
+every empty-history key receives one identical probability equal to `sigmoid(b_output)` to within 1e-6,
+against 59 distinct values among 60 non-empty keys, pinned by
+`tests/test_commands.py::test_every_empty_history_key_receives_the_same_constant_prediction`. It follows
+from two earlier decisions — static (`time = null`) events and the MEDS standard markers are both excluded
+— which together leave **no** demographic path, so an empty history means no input at all rather than a
+reduced model.
+
+This matters for reading a counting-baseline decomposition across ports. A sibling port keeps its
+demographic features flowing on an empty window, so its empty stratum is a demographics-only submodel and
+can show genuine within-stratum discrimination from age and sex. Reporting one port's empty stratum as
+though it were the other's kind would mislead, so both are stated. **The comparable figure across ports is
+AUROC on non-empty keys**; the all-keys figure mixes in a block whose behaviour differs by port.
+
 ### Visit-count distribution — the evidence behind the 1-day granularity decision
 
 With `visit_bucket_minutes = 1440` the training split averages **26.17 visits per key** (median 8, max 218),
@@ -520,9 +534,39 @@ single file per split, which is the worst case. Re-sharding the identical 16.4M-
 
 Same data, same work, same wall time; a 5.9x memory reduction from sharding alone. The empirical rule is
 
-> **peak RSS ~ 1 GB baseline + ~0.5 KB per row of the largest shard**
+> ~~peak RSS ~ 1 GB baseline + ~0.5 KB per row of the largest shard~~ — **FALSIFIED on real data.**
 
-which held to within +/-20% across all three points. A full MIMIC-IV extract sharded at MEDS-DEV's usual
+which held to within +/-20% across all three points **and was wrong by 3.1x the first time it met a real
+MIMIC-IV extract.** Measured on the cluster: the largest real shard is 3,206,908 rows and
+`preprocess_data` used **MaxRSS 7.44 GiB** against the rule's predicted 2.6 GB.
+
+| Source of the shard | Rows | Peak RSS | Bytes/row above a 1 GB baseline |
+|---|---:|---:|---:|
+| pure synthetic (fresh generator) | 2,000,000 | 0.8-1.2 GB | **-100 to +133** |
+| replicated real demo cohort | 1.1M / 2.65M / 14.4M | 1,357 / 2,285 / 7,968 MB | **384 / 526 / 511** |
+| **real MIMIC-IV extract** | **3,206,908** | **7,614 MB** | **2,178** |
+
+**The variable is right and the coefficient is worthless.** Memory plainly did not scale with the 881M-row
+dataset — 7.44 GiB for an extract that size is only explicable if the largest shard governs. But the
+per-row coefficient varies about 20x across data regimes at comparable row counts, so it cannot be fitted
+on anything but the real thing.
+
+**Why the +/-20% was never evidence.** All three fitted points came from one generator. Their agreement
+with each other measured the generator's self-consistency, not the rule's accuracy — the same shape as
+every other defective check recorded here, where the instrument could not observe what it was cited for.
+
+Two candidate explanations were measured and **excluded**, rather than left as plausible stories: code
+cardinality and string width account for at most ~133 B/row (7k vs 100k distinct codes, 12- vs 40-char
+strings), and event clustering — many events sharing a `(subject, time)` group, as real ICU data does —
+moves it not at all. Parquet row-group layout as written by `MEDS_transforms` remains untested, because
+reproducing it needs a real full-extract shard that is not available here. **The cause is unresolved and
+is recorded as unresolved.**
+
+Practical guidance, replacing the rule: size `MEMORY` from the **measured real coefficient of ~2.2 KB per
+row of the largest shard**, with margin, and treat any synthetic-fitted coefficient as inapplicable. For
+this extract that is ~7.4 GiB against a 64 G default — comfortable, and nothing needed changing. The
+danger was never this run: it was that someone sizing *from the rule* would have read 2.6 GB, chosen 4 G
+as a 50% margin, and been OOM-killed. A full MIMIC-IV extract sharded at MEDS-DEV's usual
 granularity should therefore sit in single-digit GB regardless of total size, and **the number to check
 before submitting is the row count of the largest shard, not the size of the dataset**. If the extract has
 few, very large shards, the mitigation is re-sharding the input, not more RAM.
@@ -686,6 +730,20 @@ One point from that brief needed no change: the vocabulary is built from the **d
 `metadata/codes.parquet`. That is not a reaction to any report about that file's contents but a structural
 choice — a metadata sidecar may enumerate more, fewer, or different codes than the events contain, so the
 events are the authority. This port contains no reference to that file.
+
+### A CUDA check belongs in a GPU job, not on the submit host
+
+The runbook I first sent placed `python -c "import torch; print(torch.cuda.is_available())"` among the
+login-node pre-flight checks. It returned `False` — not because the environment is wrong, but because
+**the login node has no GPU at all**, so that assertion can only ever be false where it was placed. A
+negative result there is indistinguishable from a real failure: the same defect as a check whose
+instrument cannot observe what it asserts.
+
+The x86_64 question it was meant to answer is better settled statically, and was: the lock carries linux
+`x86_64` wheels for 28 packages with **zero aarch64-only** packages, so an aarch64-authored lock resolves
+on an x86 cluster. `uv sync` then confirmed it in 122 s. CUDA availability is a separate question and must
+be asserted **inside a GPU job** — in practice the first per-epoch line from `supervised_train` is that
+evidence, since the model would not train without it.
 
 ### The documented full-data procedure sets a `RUN_ROOT` this port refuses
 
