@@ -978,6 +978,36 @@ still passes when a held-out row is swapped for a training one, which is the fai
 Both were mutation-checked rather than trusted for passing: admitting `held_out` into the fit fails the
 first, and carving the fallback from all rows instead of `train_rows` fails the second.
 
+**Checked against BEHRT's control-blindness principle, and it found a second gap.** The direct question
+— does either `_training_rows` test use a positive control running under a different configuration from
+the negative assertion it supports? — is **no**. In both tests the control and the assertion are the same
+invocation: `fit == {0, 4}` and `validation == {2}` prove selection happens at all, alongside the
+disjointness assertion; `validation.size > 0` proves the fallback fires, alongside the subset assertion.
+Nothing is established under one configuration and relied on under another.
+
+Applying the principle **one level up** was not clean. Both tests hand-build the `assignments` Series that
+production derives from `store.split_of(...)` (`commands.py:178`), so they are blind to split *derivation*
+by construction. `split_of` is a **left join** (`windows.py:95`) and `_training_rows` indexes label rows
+**positionally** against its result — so a subject listed twice in the split map expands the join, shifts
+every subsequent split by one, and moves held-out rows into the fit **without any error anywhere**.
+
+`read_split_map` already deduplicates (`preprocess.py:60`, `:71`), so the defect was not live. But that
+guard was **unprotected**: deleting it passed all 114 tests. Its only control was a fixture containing no
+duplicate to catch — a control blind to the condition it protects against, which is BEHRT's shape exactly,
+found at the layer below the one the question pointed at. Closed with:
+
+- `test_a_subject_listed_twice_in_the_split_map_collapses_to_one_row` — pins the dedup where it lives
+- `test_split_of_refuses_a_split_map_that_would_misalign_rather_than_misassigning` — pins the consequence
+- a length check in `split_of` (`windows.py:96-105`) that turns a silent misalignment into a refusal,
+  since the positional contract between these two functions was real but nowhere stated
+
+Both mutation-checked: dropping the dedup fails the first, dropping the length check fails the second.
+
+The generalisable form, one step beyond the version received: **a test that constructs its own input is
+blind to how that input is really produced.** Mutation-checking proves an assertion can fail; it does not
+prove the assertion sits on the production path. Both of my `_training_rows` tests survive every mutation
+to `_training_rows` and would have survived this leak untouched.
+
 **What is still not verified, and how to close it.** The above establishes that the code cannot fit on
 held-out rows. It does not establish what the full-data run actually did, because `/groups/...` is
 unreachable here and I have read no run manifest. `supervised_train` writes `train_split_rows`,

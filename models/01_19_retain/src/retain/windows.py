@@ -93,6 +93,16 @@ class PatientStore:
         """Split name per subject, `None` for a subject the dataset does not assign."""
         frame = pl.DataFrame({"subject_id": subject_ids.cast(pl.Int64)})
         joined = frame.join(self.splits, on="subject_id", how="left")
+        if joined.height != frame.height:
+            # `_training_rows` indexes label rows by position against this result, so an expanded
+            # join would not error anywhere -- it would shift every split by one and quietly move
+            # held-out rows into the fit. `read_split_map` deduplicates; this refuses to proceed if
+            # a store was published before it did, rather than trusting that guarantee silently.
+            raise ValueError(
+                f"the split map assigns some subject more than once: the join expanded {frame.height} "
+                f"rows to {joined.height}. Callers align splits to label rows positionally, so this "
+                "would misassign splits rather than fail."
+            )
         return joined.get_column("split")
 
     def code_strings(self) -> list[str]:

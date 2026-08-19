@@ -289,3 +289,27 @@ def test_a_task_anchored_on_a_subjects_first_event_is_not_empty_by_default(store
         patients, _keys(1, first_event), RetainConfig(include_events_at_prediction_time=False)
     )
     assert strict.n_empty == 1, "the strict boundary empties a first-event-anchored key"
+
+
+def test_a_subject_listed_twice_in_the_split_map_collapses_to_one_row(tmp_path):
+    """The dedup in `read_split_map` is what keeps split assignment aligned to label rows.
+
+    Verified by mutation that removing it passed all 114 tests: its only control was a fixture with
+    no duplicate to catch, which is a control blind to the condition it protects against.
+    """
+    dataset = _write_dataset(tmp_path / "meds", ROWS, SPLITS + [(1, "train")])
+    derived = read_split_map(dataset)
+    assert derived.height == 3
+    assert derived.get_column("subject_id").is_duplicated().sum() == 0
+
+
+def test_split_of_refuses_a_split_map_that_would_misalign_rather_than_misassigning(store):
+    """The consequence the dedup prevents, asserted on the consumer rather than assumed.
+
+    An expanded join returns more splits than subjects asked for; nothing downstream compares the
+    two lengths, so the failure would surface as held-out rows in the fit and not as an error.
+    """
+    patients, _ = store
+    patients.splits = pl.concat([patients.splits, patients.splits.filter(pl.col("subject_id") == 3)])
+    with pytest.raises(ValueError, match="more than once"):
+        patients.split_of(pl.Series([1, 2, 3]))
