@@ -17,7 +17,7 @@ import yaml
 
 torch = pytest.importorskip("torch")
 
-from retain.commands import COMMANDS, IS_STUB  # noqa: E402
+from retain.commands import COMMANDS, IS_STUB, _training_rows  # noqa: E402
 from retain.config import RetainConfig  # noqa: E402
 from retain.model import Retain  # noqa: E402
 from retain.training import _cross_entropy, collate, roc_auc, score, train  # noqa: E402
@@ -373,3 +373,36 @@ def test_every_empty_history_key_receives_the_same_constant_prediction(dataset, 
     assert probabilities[empty][0] == pytest.approx(intercept, abs=1e-6)
     # And the non-empty keys are not constant, or the comparison above would be vacuous.
     assert len(np.unique(probabilities[~empty])) > 1
+
+
+def test_held_out_rows_never_reach_the_fit_or_the_epoch_selection():
+    """`held_out` must be touched by `predict` alone.
+
+    `_training_rows` is the only place MEDS splits become fit/validation roles, so this is the whole
+    boundary. Asserted on index *sets* rather than counts: a count check passes if a held-out row is
+    swapped for a training one, which is the failure that matters.
+    """
+    assignments = pl.Series(["train", "held_out", "tuning", "held_out", "train", None])
+    fit, validation, report = _training_rows(assignments, RetainConfig())
+
+    assert set(fit.tolist()) == {0, 4}
+    assert set(validation.tolist()) == {2}
+    held_out_and_unassigned = {1, 3, 5}
+    assert held_out_and_unassigned.isdisjoint(set(fit.tolist()) | set(validation.tolist()))
+    assert report["validation_source"] == "tuning"
+
+
+def test_the_seeded_validation_fallback_carves_from_train_only():
+    """With no `tuning` split the epoch is selected on a hold-out cut from `train`, never from `held_out`.
+
+    This is the path a dataset without a tuning split takes, and it is the one where a fallback could
+    quietly reach for held-out rows to fill an empty validation set.
+    """
+    assignments = pl.Series(["train"] * 8 + ["held_out"] * 4)
+    train_indices = set(range(8))
+    fit, validation, report = _training_rows(assignments, RetainConfig())
+
+    assert validation.size > 0, "the fallback must produce a validation set"
+    assert set(fit.tolist()) | set(validation.tolist()) <= train_indices
+    assert set(fit.tolist()).isdisjoint(set(validation.tolist()))
+    assert report["validation_source"].endswith("hold-out of train")

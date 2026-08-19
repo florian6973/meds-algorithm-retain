@@ -940,6 +940,52 @@ numbers will be written here once they can be derived from `predictions.parquet`
 directly. Until then this row reads "not yet" rather than carrying figures whose provenance would be a
 message.
 
+## Patient separation: where the split boundary is, by path
+
+Asked across the pilot on 2026-08-19. This port is `supervised`, so there is no pretrain stage. Answers
+are from source, and the three files below are **byte-identical between HEAD and `54a8f31`, the commit the
+full-data run executed** — so the boundary verified here is the boundary that produced that column.
+
+| Question | Answer | Site |
+|---|---|---|
+| Does the fit read only `train`? | `train_rows` selects `split == TRAIN_SPLIT` | `commands.py:399` |
+| Does epoch selection use only `tuning`? | `validation_rows` selects `split == TUNING_SPLIT` | `commands.py:400-402` |
+| Is `held_out` touched by `predict` alone? | it is selected into neither array, so no gradient or epoch choice can see it | `commands.py:399-402` |
+| Where is the vocabulary fit? | semi-join to training subjects **before** counting | `preprocess.py:92` |
+| Which subjects does `min_code_count` count? | the train-only counts from that semi-join | `preprocess.py:104` |
+| Quantile bins, normalisation constants? | **none exist** — `numeric_value` never appears in `src/retain/` | package-wide |
+| Can anything extend past the prediction time? | window is bounded at `searchsorted(times, prediction)` | `windows.py:160` |
+
+**`min_code_count` is a threshold on a train-only count.** Whichever value the operator picks, the subjects
+counted for it are the training split and nothing else, so the open decision is about vocabulary size and
+fidelity to the paper's 615 code groups — not about separation. It does not need revisiting on this axis.
+
+**RETAIN has no transductive feature-selection surface at all**, which is worth stating plainly rather
+than as an absence: the model embeds code indices and reads no values, so there is no quantile table, no
+scaler, and no top-k selection to compute over the wrong population. The XGBoost defect the coordinator
+described — `meds-tab-describe` reading all shards before a `max_included_codes` cut — has no analogue
+here, because the only fitted-over-a-population object is the vocabulary and that one is semi-joined.
+
+**One real gap, found by this question and now closed.** `_training_rows` is the sole place MEDS splits
+become fit/validation roles, and **nothing pinned it**. Every claim above about `held_out` rested on
+reading the function. Two tests now enforce it, asserting index *sets* rather than counts — a count check
+still passes when a held-out row is swapped for a training one, which is the failure that matters:
+
+- `test_held_out_rows_never_reach_the_fit_or_the_epoch_selection`
+- `test_the_seeded_validation_fallback_carves_from_train_only` — the path a dataset with no `tuning`
+  split takes, where a fallback could quietly reach for held-out rows to fill an empty validation set
+
+Both were mutation-checked rather than trusted for passing: admitting `held_out` into the fit fails the
+first, and carving the fallback from all rows instead of `train_rows` fails the second.
+
+**What is still not verified, and how to close it.** The above establishes that the code cannot fit on
+held-out rows. It does not establish what the full-data run actually did, because `/groups/...` is
+unreachable here and I have read no run manifest. `supervised_train` writes `train_split_rows`,
+`tuning_split_rows` and `validation_source` into its manifest for exactly this purpose
+(`commands.py:405-408`); reading those three fields against the split census confirms it empirically. That
+is a concrete item for when artifact reach lands, and until then this column should be marked
+code-verified rather than run-verified.
+
 ## Counting baseline: pre-registered before the number exists
 
 `scripts/counting-baseline.py` asks how much of this model's discrimination is available from **counting
