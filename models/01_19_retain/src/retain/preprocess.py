@@ -48,16 +48,31 @@ def data_files(meds_dir: Path) -> list[Path]:
     return files
 
 
+#: Names for the two places split membership can come from. This port treats the declared map as
+#: authoritative and consults shard placement only in its absence; a sibling port made the opposite
+#: choice, so the resolved value is recorded per run rather than left implicit.
+DECLARED_MAP_SOURCE = "metadata/subject_splits.parquet"
+PLACEMENT_SOURCE = "data/<split>/ placement"
+
+
 def read_split_map(meds_dir: Path) -> pl.DataFrame:
     """`(subject_id, split)` from MEDS metadata, falling back to the split-sharded directory layout."""
+    return read_split_map_with_source(meds_dir)[0]
+
+
+def read_split_map_with_source(meds_dir: Path) -> tuple[pl.DataFrame, str]:
+    """The split map and the name of the source it came from."""
     meds_dir = Path(meds_dir)
     metadata = meds_dir / "metadata" / "subject_splits.parquet"
     if metadata.is_file():
         frame = pl.read_parquet(metadata)
         if {"subject_id", "split"} <= set(frame.columns):
-            return frame.select(
-                pl.col("subject_id").cast(pl.Int64), pl.col("split").cast(pl.Utf8)
-            ).unique(subset=["subject_id"], keep="first")
+            return (
+                frame.select(
+                    pl.col("subject_id").cast(pl.Int64), pl.col("split").cast(pl.Utf8)
+                ).unique(subset=["subject_id"], keep="first"),
+                DECLARED_MAP_SOURCE,
+            )
     root = meds_dir / "data"
     frames = []
     placed = False
@@ -82,7 +97,8 @@ def read_split_map(meds_dir: Path) -> pl.DataFrame:
     return (
         pl.concat(frames)
         .select(pl.col("subject_id").cast(pl.Int64), pl.col("split").cast(pl.Utf8))
-        .unique(subset=["subject_id"], keep="first")
+        .unique(subset=["subject_id"], keep="first"),
+        PLACEMENT_SOURCE,
     )
 
 
@@ -130,11 +146,47 @@ def _build_vocabulary(files: list[Path], train_subjects: pl.DataFrame, config: R
     )
 
 
+def _placement_agreement(
+    placement_frames: list[pl.DataFrame], splits: pl.DataFrame, meds_dir: Path
+) -> dict[str, Any]:
+    """Compare shard placement against the declared split map, when placement encodes splits at all.
+
+    Both sources exist on a normal MEDS extract and this port resolves membership from the map, so a
+    divergence would move subjects between cohorts here **and nowhere else** -- a sibling port resolves
+    from placement. Measured on the pilot extract: 0 disagreements over 364,627 subjects, reported by
+    the cluster session. That agreement is what made the precedence unobservable in the first place, so
+    it is checked per run rather than assumed to hold.
+
+    Only compared when the directory names are split names. `data/shard_00/` is a legal layout that
+    encodes no split, and comparing against it would refuse every such extract.
+    """
+    if not placement_frames:
+        return {"placement_encodes_splits": False, "placement_disagreements": None}
+    placement = pl.concat(placement_frames).unique(subset=["subject_id"], keep="first")
+    declared = set(splits.get_column("split").unique().to_list())
+    observed = set(placement.get_column("placement").unique().to_list())
+    if not observed <= declared:
+        return {"placement_encodes_splits": False, "placement_disagreements": None}
+
+    joined = placement.join(splits, on="subject_id", how="inner")
+    disagreements = joined.filter(pl.col("placement") != pl.col("split"))
+    if disagreements.height:
+        sample = disagreements.head(3).rows()
+        raise ValueError(
+            f"{meds_dir} contradicts itself about {disagreements.height} subject(s): shard placement "
+            f"and {DECLARED_MAP_SOURCE} assign them to different splits, e.g. {sample} as "
+            "(subject_id, placement, declared). This port resolves membership from the declared map, "
+            "so it would train on a different cohort than a port resolving from placement, with no "
+            "error on either side. Reconcile the extract before comparing models across it."
+        )
+    return {"placement_encodes_splits": True, "placement_disagreements": 0}
+
+
 def preprocess(meds_dir: Path, staging: Path, config: RetainConfig) -> dict[str, Any]:
     """Write the patients payload into `staging` and return its work units."""
     meds_dir = Path(meds_dir)
     files = data_files(meds_dir)
-    splits = read_split_map(meds_dir)
+    splits, split_source = read_split_map_with_source(meds_dir)
     train_subjects = splits.filter(pl.col("split") == TRAIN_SPLIT).select("subject_id")
     if train_subjects.is_empty():
         raise ValueError(
@@ -157,13 +209,21 @@ def preprocess(meds_dir: Path, staging: Path, config: RetainConfig) -> dict[str,
     }
     subjects: set[int] = set()
     event_groups = 0
+    placement_frames: list[pl.DataFrame] = []
     for path in files:
+        parts = path.relative_to(meds_dir / "data").parts
         frame = pl.read_parquet(path, columns=list(EVENT_COLUMNS)).with_columns(
             pl.col("subject_id").cast(pl.Int64),
             pl.col("time").cast(pl.Datetime("us")),
             pl.col("code").cast(pl.Utf8),
         )
         totals["events"] += frame.height
+        if len(parts) > 1:
+            placement_frames.append(
+                frame.select(pl.col("subject_id").unique()).with_columns(
+                    pl.lit(parts[0]).alias("placement")
+                )
+            )
         timestamped = frame.filter(pl.col("time").is_not_null())
         totals["static_events"] += frame.height - timestamped.height
         clinical = timestamped.filter(_keeps_code(config))
@@ -184,10 +244,14 @@ def preprocess(meds_dir: Path, staging: Path, config: RetainConfig) -> dict[str,
         destination.parent.mkdir(parents=True, exist_ok=True)
         events.write_parquet(destination)
 
+    agreement = _placement_agreement(placement_frames, splits, meds_dir)
+
     (staging / "config.json").write_text(json.dumps(config.to_dict(), indent=2, sort_keys=True))
     return {
         "subjects": len(subjects),
         "subjects_in_split_map": splits.height,
+        "split_source": split_source,
+        **agreement,
         "shards": len(files),
         "vocabulary_size": vocabulary.height,
         "event_groups": event_groups,

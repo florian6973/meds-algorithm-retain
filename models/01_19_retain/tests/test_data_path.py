@@ -14,7 +14,7 @@ import polars as pl
 import pytest
 
 from retain.config import RetainConfig
-from retain.preprocess import preprocess, read_split_map
+from retain.preprocess import DECLARED_MAP_SOURCE, preprocess, read_split_map
 from retain.windows import PatientStore, build_sequences
 
 DAY = 86_400_000_000
@@ -338,13 +338,14 @@ def test_the_split_map_is_authoritative_when_shard_placement_disagrees(tmp_path)
     assert read_split_map(dataset).sort("subject_id").rows() == sorted(placement)
 
 
-def test_shard_placement_is_inert_inside_the_published_artifact(tmp_path):
-    """`preprocess` mirrors the input directory tree into `sequences/`, so the artifact carries a
-    second apparent split source that nothing consults.
+def test_preprocess_refuses_an_extract_whose_placement_contradicts_its_split_map(tmp_path):
+    """Divergence between the two sources is refused rather than silently resolved.
 
-    `PatientStore` rglobs every shard and takes membership from the copied map, so a subject whose
-    sequences live under `sequences/held_out/` is still `train` if the map says so. Pinned because
-    filtering shards by directory is a plausible future optimisation that would silently reassign.
+    This port resolves membership from the declared map and a sibling port resolves it from
+    placement, so a contradictory extract moves subjects between cohorts **here and nowhere else**,
+    with no error on either side. Measured 0 disagreements over 364,627 subjects on the pilot extract
+    [transcribed, cluster session] -- that agreement is exactly what made the precedence
+    unobservable, so it is checked per run instead of assumed.
     """
     placement = [(1, "train"), (2, "held_out"), (3, "train")]
     declared = [(1, "train"), (2, "train"), (3, "held_out")]
@@ -352,12 +353,48 @@ def test_shard_placement_is_inert_inside_the_published_artifact(tmp_path):
     pl.DataFrame(declared, schema=["subject_id", "split"], orient="row").write_parquet(
         dataset / "metadata" / "subject_splits.parquet"
     )
-    out = tmp_path / "data"
-    preprocess(dataset, _staged(out), RetainConfig())
-    patients = PatientStore(out)
+    with pytest.raises(ValueError, match="contradicts itself"):
+        preprocess(dataset, _staged(tmp_path / "data"), RetainConfig())
 
-    assert (out / "sequences" / "held_out").is_dir(), "the fixture must actually diverge the two"
-    assert patients.split_of(pl.Series([1, 2, 3])).to_list() == ["train", "train", "held_out"]
+
+def test_a_shard_directory_that_encodes_no_split_is_not_treated_as_a_contradiction(tmp_path):
+    """`data/shard_00/` is a legal layout carrying no split information.
+
+    Comparing placement against the map there would refuse every such extract, so the check runs only
+    when the directory names are split names.
+    """
+    dataset = _write_dataset(tmp_path / "meds", ROWS, SPLITS)
+    for split in ("train", "held_out"):
+        for shard in (dataset / "data" / split).glob("*.parquet"):
+            neutral = dataset / "data" / f"shard_{split}"
+            neutral.mkdir(exist_ok=True)
+            shard.rename(neutral / shard.name)
+        (dataset / "data" / split).rmdir()
+
+    record = preprocess(dataset, _staged(tmp_path / "data"), RetainConfig())
+    assert record["placement_encodes_splits"] is False
+    assert record["placement_disagreements"] is None
+    assert record["split_source"] == DECLARED_MAP_SOURCE
+
+
+def test_shard_placement_is_inert_inside_the_published_artifact(store, tmp_path):
+    """`preprocess` mirrors the input tree into `sequences/`, so the payload carries a second apparent
+    split source that nothing consults.
+
+    `PatientStore` rglobs every shard and takes membership from the copied map, so physically moving a
+    held-out shard under `sequences/train/` must not reassign anyone. Pinned because filtering shards
+    by directory is a plausible optimisation that would silently do exactly that.
+    """
+    patients, _ = store
+    moved = 0
+    for shard in (patients.root / "sequences" / "held_out").glob("*.parquet"):
+        shard.rename(patients.root / "sequences" / "train" / f"moved_{shard.name}")
+        moved += 1
+    assert moved, "the fixture must actually have a held-out shard to move"
+
+    reopened = PatientStore(patients.root)
+    assert len(reopened.shards) == len(patients.shards), "rglob must still find every shard"
+    assert reopened.split_of(pl.Series([1, 2, 3])).to_list() == ["train", "train", "held_out"]
 
 
 def test_a_flat_extract_without_a_split_map_is_refused_rather_than_called_train(tmp_path):

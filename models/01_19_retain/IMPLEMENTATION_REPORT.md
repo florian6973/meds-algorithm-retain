@@ -1024,13 +1024,33 @@ subject 3:
 | `data/held_out/` | `train` | **`train`** — the map wins |
 | `data/train/` | `held_out` | **`held_out`** — placement is not consulted |
 
-**On this port the split map is authoritative and placement governs only in its absence** — the opposite
-of the sibling port, where placement won and the map was ignored. Both are defensible; what matters is
-that **two ports in this fleet resolve split membership from different sources, and nobody has checked
-that the two sources agree on the real extract.** They almost certainly do. But if they ever disagree,
-the ports train on different cohorts with no error on either side, and the comparison silently stops
-being like-for-like. That is a fleet-level check, cheap to run: compare `subject_splits.parquet` against
-the `data/<split>/` placement on the extract itself.
+**This port declares the split map authoritative; placement governs only in its absence** — the
+opposite of a sibling port, where placement won and the map was ignored. Both choices are defensible and
+neither had been written down, which made the divergence risk invisible at fleet level rather than merely
+inside each port.
+
+**The fleet-level check has since been run** `[T]` (cluster session, on the real extract; not reachable
+from here): `364,627` subjects in the declared map, `364,627` by placement, in-map-only `0`,
+in-placement-only `0`, **disagreements `0`**. So the cross-port comparison is like-for-like, and this port
+and the placement-resolving one did train on the same cohort despite reading opposite sources.
+
+**That agreement is the reason neither port could observe which source governs**, so it is now checked per
+run rather than assumed. `_placement_agreement` (`preprocess.py:104-137`) compares the two inside the pass
+that already reads every shard — no extra IO — and **refuses an extract that contradicts itself**, naming
+the offending subjects. The check runs only when the directory names are split names: `data/shard_00/` is
+a legal layout encoding no split, and comparing against it would refuse every such extract.
+
+Each run now records the resolution in its manifest, which is what makes a cross-port check possible
+without reading anyone's prose:
+
+| field | meaning |
+|---|---|
+| `split_source` | `metadata/subject_splits.parquet` or `data/<split>/ placement` |
+| `placement_encodes_splits` | whether the directory names carry split information at all |
+| `placement_disagreements` | subjects the two sources assign differently; `0` required to proceed |
+
+The honest status is the sibling session's: *it is fine now, and without this check nothing would tell you
+when it stopped.*
 
 **A third instance, one layer further down.** `preprocess` mirrors the input tree into the artifact
 (`:169`), so the published payload carries `sequences/train/`, `sequences/held_out/` directories — and
