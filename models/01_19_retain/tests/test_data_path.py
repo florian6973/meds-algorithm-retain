@@ -313,3 +313,77 @@ def test_split_of_refuses_a_split_map_that_would_misalign_rather_than_misassigni
     patients.splits = pl.concat([patients.splits, patients.splits.filter(pl.col("subject_id") == 3)])
     with pytest.raises(ValueError, match="more than once"):
         patients.split_of(pl.Series([1, 2, 3]))
+
+
+def test_the_split_map_is_authoritative_when_shard_placement_disagrees(tmp_path):
+    """Which of the two split sources wins, established by making them disagree.
+
+    `_write_dataset` writes `data/<split>/` directories *and* `subject_splits.parquet` from one
+    assignment, so any fixture built from it is unable to discriminate: consistent sources agree
+    whichever one production actually reads. Only divergence answers it.
+    """
+    placement = [(1, "train"), (2, "held_out"), (3, "train")]
+    declared = [(1, "train"), (2, "train"), (3, "held_out")]
+    dataset = _write_dataset(tmp_path / "meds", ROWS, placement)
+    pl.DataFrame(declared, schema=["subject_id", "split"], orient="row").write_parquet(
+        dataset / "metadata" / "subject_splits.parquet"
+    )
+
+    # Subject 2's events sit in data/held_out/ and subject 3's in data/train/; the map says the
+    # opposite for both. The map wins, so placement cannot silently reassign a subject.
+    assert read_split_map(dataset).sort("subject_id").rows() == declared
+
+    # And placement governs only when there is no map to consult.
+    (dataset / "metadata" / "subject_splits.parquet").unlink()
+    assert read_split_map(dataset).sort("subject_id").rows() == sorted(placement)
+
+
+def test_shard_placement_is_inert_inside_the_published_artifact(tmp_path):
+    """`preprocess` mirrors the input directory tree into `sequences/`, so the artifact carries a
+    second apparent split source that nothing consults.
+
+    `PatientStore` rglobs every shard and takes membership from the copied map, so a subject whose
+    sequences live under `sequences/held_out/` is still `train` if the map says so. Pinned because
+    filtering shards by directory is a plausible future optimisation that would silently reassign.
+    """
+    placement = [(1, "train"), (2, "held_out"), (3, "train")]
+    declared = [(1, "train"), (2, "train"), (3, "held_out")]
+    dataset = _write_dataset(tmp_path / "meds", ROWS, placement)
+    pl.DataFrame(declared, schema=["subject_id", "split"], orient="row").write_parquet(
+        dataset / "metadata" / "subject_splits.parquet"
+    )
+    out = tmp_path / "data"
+    preprocess(dataset, _staged(out), RetainConfig())
+    patients = PatientStore(out)
+
+    assert (out / "sequences" / "held_out").is_dir(), "the fixture must actually diverge the two"
+    assert patients.split_of(pl.Series([1, 2, 3])).to_list() == ["train", "train", "held_out"]
+
+
+def test_a_flat_extract_without_a_split_map_is_refused_rather_than_called_train(tmp_path):
+    """The trapdoor in the directory fallback: `parts[0] if len(parts) > 1 else TRAIN_SPLIT`.
+
+    A flat layout has no split component, so every subject defaulted to `train` -- measured as
+    `[(1, 'train'), (2, 'train'), (3, 'train')]` before this refusal. That is a transductive
+    vocabulary and a fit over held-out patients, reported by nothing. Reachable only when the
+    dataset also ships no `subject_splits.parquet`, which is why no fixture had produced it.
+    """
+    dataset = tmp_path / "meds"
+    (dataset / "data").mkdir(parents=True)
+    pl.DataFrame(
+        {
+            "subject_id": [1, 2, 3],
+            "time": [datetime(2020, 1, 1)] * 3,
+            "code": ["A", "B", "C"],
+            "numeric_value": [None, None, None],
+        },
+        schema={
+            "subject_id": pl.Int64,
+            "time": pl.Datetime("us"),
+            "code": pl.Utf8,
+            "numeric_value": pl.Float32,
+        },
+    ).write_parquet(dataset / "data" / "0.parquet")
+
+    with pytest.raises(ValueError, match="flat data/ layout"):
+        read_split_map(dataset)

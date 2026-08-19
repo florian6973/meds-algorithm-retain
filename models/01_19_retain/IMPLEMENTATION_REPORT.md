@@ -1008,6 +1008,48 @@ blind to how that input is really produced.** Mutation-checking proves an assert
 prove the assertion sits on the production path. Both of my `_training_rows` tests survive every mutation
 to `_training_rows` and would have survived this leak untouched.
 
+**The second shape applies here too, and it was live.** Asked whether a fixture keeping two split
+sources consistent can tell which one production reads. `read_split_map` has exactly two:
+`metadata/subject_splits.parquet` when present (`preprocess.py:55-60`), otherwise the shard directory
+name (`:61-77`). `_write_dataset` writes **both**, always from one assignment. **Measured: forcing the
+directory path unconditionally passed all 116 tests.** The sources never disagreed, so nothing could
+observe which one governs.
+
+Diverged them — subject 2's events under `data/held_out/` while the map says `train`, and the reverse for
+subject 3:
+
+| shard placement | map says | result |
+|---|---|---|
+| `data/train/` | `train` | `train` — positive control |
+| `data/held_out/` | `train` | **`train`** — the map wins |
+| `data/train/` | `held_out` | **`held_out`** — placement is not consulted |
+
+**On this port the split map is authoritative and placement governs only in its absence** — the opposite
+of the sibling port, where placement won and the map was ignored. Both are defensible; what matters is
+that **two ports in this fleet resolve split membership from different sources, and nobody has checked
+that the two sources agree on the real extract.** They almost certainly do. But if they ever disagree,
+the ports train on different cohorts with no error on either side, and the comparison silently stops
+being like-for-like. That is a fleet-level check, cheap to run: compare `subject_splits.parquet` against
+the `data/<split>/` placement on the extract itself.
+
+**A third instance, one layer further down.** `preprocess` mirrors the input tree into the artifact
+(`:169`), so the published payload carries `sequences/train/`, `sequences/held_out/` directories — and
+`PatientStore` rglobs all of them, taking membership from the copied map (`windows.py:83`). Placement is
+**inert inside the artifact**, which is correct and was asserted nowhere. Filtering shards by directory is
+a plausible optimisation that would silently reassign subjects, so it is now pinned end to end through
+`preprocess` into `PatientStore`.
+
+**And the trapdoor, measured rather than reasoned about.** The fallback reads
+`parts[0] if len(parts) > 1 else TRAIN_SPLIT`, so a **flat** `data/*.parquet` layout has no split
+component and every subject defaults to `train`. Confirmed on a three-subject flat extract:
+`[(1, 'train'), (2, 'train'), (3, 'train')]`, one distinct split. That is a vocabulary fitted over every
+patient and a fit including held-out patients, reported by nothing. It is reachable only when the dataset
+*also* ships no `subject_splits.parquet`, which is exactly why no fixture had ever produced it. **Now
+refused outright** (`preprocess.py:71-83`), with the measurement in the comment.
+
+Three tests, all mutation-checked: ignoring the map fails the two divergence tests, and dropping the
+refusal fails the third.
+
 **What is still not verified, and how to close it.** The above establishes that the code cannot fit on
 held-out rows. It does not establish what the full-data run actually did, because `/groups/...` is
 unreachable here and I have read no run manifest. `supervised_train` writes `train_split_rows`,

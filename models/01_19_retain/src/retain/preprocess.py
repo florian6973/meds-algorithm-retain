@@ -60,11 +60,25 @@ def read_split_map(meds_dir: Path) -> pl.DataFrame:
             ).unique(subset=["subject_id"], keep="first")
     root = meds_dir / "data"
     frames = []
+    placed = False
     for path in data_files(meds_dir):
         parts = path.relative_to(root).parts
+        placed = placed or len(parts) > 1
         split = parts[0] if len(parts) > 1 else TRAIN_SPLIT
         subjects = pl.read_parquet(path, columns=["subject_id"]).unique()
         frames.append(subjects.with_columns(pl.lit(split).alias("split")))
+    if not placed:
+        # A flat `data/*.parquet` layout carries no split information, and neither does this
+        # dataset's metadata. Defaulting every subject to `train` -- which this loop would
+        # otherwise do -- fits the vocabulary over held-out patients and trains on them, with
+        # nothing anywhere reporting an error. Measured: on a flat three-subject extract the map
+        # came back `[(1, 'train'), (2, 'train'), (3, 'train')]`, one distinct split. Refuse instead.
+        raise ValueError(
+            f"{meds_dir} has a flat data/ layout and no metadata/subject_splits.parquet, so subject "
+            "splits cannot be determined. Treating every subject as 'train' would make the "
+            "vocabulary transductive and fit on held-out patients silently. Supply "
+            "metadata/subject_splits.parquet, or shard the extract into data/<split>/ directories."
+        )
     return (
         pl.concat(frames)
         .select(pl.col("subject_id").cast(pl.Int64), pl.col("split").cast(pl.Utf8))
