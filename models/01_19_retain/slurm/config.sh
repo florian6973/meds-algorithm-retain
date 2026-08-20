@@ -70,6 +70,29 @@ fi
 # stage and gets the wider time limit of the two CPU-bound possibilities. Training and prediction are the
 # GRU passes and take the GPU partition.
 
+# REUSING AN EXISTING preprocess_data ARTIFACT (rerunning only the two label-dependent stages).
+# preprocess_data is task-independent -- its stage_args below take external_meds_dir and vocabulary
+# settings, never LABELS_DIR -- so a second label set needs supervised_train and predict only.
+# submit.sh has no stage filter: it submits every command `meds-model commands` declares. But
+# job.sbatch runs exactly ONE command from the environment, and stage_args is a plain shell function,
+# so the subset needs no change to either template-owned file:
+#
+#   mkdir -p "$NEW/artifacts" && ln -s "$OLD/artifacts/data" "$NEW/artifacts/data"
+#   export MEDS_ROOT=... LABELS_DIR=<new task> RUN_DIR="$NEW/artifacts"
+#   source slurm/config.sh
+#   for c in supervised_train predict; do stage_args "$c" > "$NEW/command-args/$c.args"; done
+#   sbatch ... --export=ALL,MEDS_MODEL_COMMAND=supervised_train,MEDS_MODEL_ARGS_FILE=...,RUN_ID=... job.sbatch
+#
+# Verified locally end to end: both stages ran against the shared artifact, the source run's model/
+# and predict/ were byte-identical afterwards, and the new run's model manifest recorded
+# `input_data_dir.path` as the RESOLVED source directory plus its config_digest -- so reuse is
+# auditable from the manifest rather than implicit, and a mismatched vocabulary would be detectable.
+#
+# DO NOT instead point RUN_DIR at a shared directory for several tasks at once. RUN_DIR is honoured
+# from the environment (submit.sh), so it looks like the sharing mechanism, but stage_args derives
+# output_supervised_model_dir and output_predictions_dir from it too: ten concurrent tasks would race
+# to overwrite one model/ and one predict/. Share the input by symlink, never the run directory.
+
 # Hyper-parameters. Empty means "every official `retain.py` default", which is what a comparison run
 # should use unless there is a recorded reason to differ. Set RETAIN_MODEL_ARGS to a space-separated list
 # of key=value pairs to override, and record the exact string in IMPLEMENTATION_REPORT.md.

@@ -940,6 +940,31 @@ numbers will be written here once they can be derived from `predictions.parquet`
 directly. Until then this row reads "not yet" rather than carrying figures whose provenance would be a
 message.
 
+## Rerunning only the label-dependent stages
+
+Asked for the port's own mechanism for pointing `supervised_train` at an existing `preprocess_data`
+artifact. `preprocess_data` here is task-independent — its `stage_args` take `external_meds_dir` and
+vocabulary settings, never `LABELS_DIR` — so a second label set needs the two GPU stages only.
+
+**`submit.sh` has no stage filter**: it submits every command `meds-model commands` declares
+(`submit.sh:15`), chained `afterok`. But **`job.sbatch` runs exactly one command** taken from the
+environment, and `stage_args` is a plain shell function in the model-owned `config.sh`. So the subset
+needs **no change to either template-owned file**: symlink the shared `data/` into a fresh run
+directory, source `config.sh`, generate args for the two stages, and submit `job.sbatch` twice. The
+recipe is in `slurm/config.sh`.
+
+**Verified end to end locally**, not asserted: both stages ran against the shared artifact, the source
+run's `model/` and `predict/` were byte-identical afterwards, and — the part worth having — the new
+run's model manifest recorded `input_data_dir.path` as the **resolved** source directory together with
+its `config_digest`. Reuse is therefore auditable from the manifest rather than implicit, and an
+artifact built under different vocabulary settings would be detectable rather than silently mixed.
+
+**One trap, stated because it looks like the answer.** `RUN_DIR` is honoured from the environment, so
+pointing it at an existing run appears to be the sharing mechanism. It is not: `stage_args` derives
+`output_supervised_model_dir` and `output_predictions_dir` from `RUN_DIR` as well, so ten concurrent
+tasks would race to overwrite one `model/` and one `predict/`. Share the input by symlink; never share
+the run directory.
+
 ## Patient separation: where the split boundary is, by path
 
 Asked across the pilot on 2026-08-19. This port is `supervised`, so there is no pretrain stage. Answers
