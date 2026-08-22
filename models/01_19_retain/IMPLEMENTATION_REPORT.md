@@ -940,6 +940,50 @@ numbers will be written here once they can be derived from `predictions.parquet`
 directly. Until then this row reads "not yet" rather than carrying figures whose provenance would be a
 message.
 
+## Run artifacts no longer have to live inside the git worktree
+
+Reported from cluster ops: this port's completed results were written under
+`<worktree>/models/01_19_retain/runs/`, where a routine `git clean -fdx` deletes them without warning,
+and collecting them meant a fetch script reaching into a git checkout. Three sibling ports write to a
+scratch path outside the repository instead.
+
+**The cause was mine and it was a coupling, not a default.** `scripts/github-sync.sh` hardcoded
+`runs/<run-id>`, so `slurm/config.sh` *refused* an off-tree `RUN_ROOT` with a distinct exit 5 —
+deliberately, because such a run completes and then cannot be published. The old refusal message said so:
+"it becomes the intended configuration once that publisher resolves RUN_ROOT; it is not usable before
+then." Keeping results publishable is what kept them destroyable.
+
+**Checked how the ports that write off-tree handle publication, rather than assuming they had solved it.**
+They have not: `origin/model/01_01_teco:scripts/github-sync.sh` also hardcodes `result_dir="runs/$run_id"`.
+So one unfixed coupling produces two symptoms across the fleet — RETAIN and BEHRT keep results where
+`git clean` reaches them; TECO, DuETT and MEDS-EIC-AR keep them where the publisher cannot find them.
+Neither group has both properties.
+
+**Fixed here by removing the coupling rather than moving the default.** The publisher now sources
+`config.sh`, resolves `$RUN_ROOT/<run-id>`, and copies the three publishable entries into the in-tree
+`runs/<run-id>/` with `cp -RL` before staging — dereferenced, because `git add` refuses an out-of-repo
+path (exit 128) and a symlink would be committed as a `120000` blob holding the host path instead of the
+content. The guard then keeps only the refusal that still matters: **in-tree but outside the ignored
+`runs/` is still exit 4**, the case that leaks `external_meds_dir` and that no convention in this fleet
+permits. Off-tree now exits 0.
+
+The default stays in-tree so local runs and the suite need no configuration; the cluster sets
+`RUN_ROOT` to a scratch path, as `slurm/config.sh` now documents.
+
+**The relaxation was already wired to happen automatically.** `test_off_tree_acceptance_tracks_this_ports_publisher`
+gates on a conjunction — the publisher must both resolve `RUN_ROOT` *and* dereference on copy — and
+flipped from expecting exit 5 to expecting exit 0 the moment both held, with no edit. Keying it on
+"mentions RUN_ROOT" would have relaxed the guard for a publisher that still could not publish.
+
+**Existing runs were not moved.** Their manifests record absolute paths into the current location, so
+relocating them would break provenance. This changes where *future* runs may live.
+
+A new end-to-end test publishes a run stored entirely outside the repository and asserts the evidence
+arrives committed, the `command-args` files carrying `external_meds_dir` do not, and nothing is staged at
+mode `120000`. Its fixture deliberately contains a **symlinked manifest**: without one the mode assertion
+had nothing to catch and only looked like coverage. Mutation-checked both ways — reverting to the
+hardcode fails it, and `cp -R` in place of `cp -RL` fails it.
+
 ## Rerunning only the label-dependent stages
 
 Asked for the port's own mechanism for pointing `supervised_train` at an existing `preprocess_data`

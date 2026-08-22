@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -187,8 +188,10 @@ def test_the_ignore_rules_the_publisher_and_the_submitter_agree_on_one_path():
     """The security property is anchored on a literal path that three files must agree about.
 
     `.gitignore` excludes `runs/**`; `slurm/config.sh` defaults `RUN_ROOT` to `runs`; and
-    `scripts/github-sync.sh` hardcodes `result_dir="runs/$run_id"` without ever reading `RUN_ROOT`. Today
-    those agree by sharing the same literal, not by construction.
+    `scripts/github-sync.sh` uses `result_dir="runs/$run_id"` as the in-tree *publication* path. The
+    publisher now reads `RUN_ROOT` to find where a run actually lives and copies it in, so the three
+    still have to agree about this one literal -- it is where the copy lands and what the ignore rules
+    allowlist -- but a run is no longer required to live there.
 
     Two things break if they diverge. Pointing `RUN_ROOT` at another *relative* path puts run output back
     inside the checkout at a location these ignore rules do not cover, and the `command-args` leak
@@ -248,35 +251,87 @@ def test_run_output_lands_inside_the_model_whatever_the_working_directory(tmp_pa
         )
 
 
-def test_a_run_root_the_publisher_cannot_reach_is_refused(tmp_path):
-    """An override elsewhere either leaks or breaks publication, so it is refused rather than allowed."""
+def test_a_run_stored_off_tree_is_published_from_where_it_actually_lives(tmp_path):
+    """The defect this replaced: run output had to live inside the git work tree to be publishable.
+
+    `scripts/github-sync.sh` hardcoded `runs/<id>`, so `slurm/config.sh` refused an off-tree `RUN_ROOT`
+    (exit 5) to avoid producing a run that completes and then cannot be published. The cost was paid on
+    the cluster: completed results sat inside a checkout, where a routine `git clean -fdx` deletes them
+    without warning and collecting them meant reaching into a git worktree. Reported by the cluster
+    session against this port and BEHRT; the three ports that write off-tree have the mirror image of
+    the same coupling -- results safe, publisher unable to find them.
+
+    This runs the publisher end to end against a run that lives outside the repository entirely and
+    asserts the evidence arrives committed. `git push` has no remote here and fails by design; the
+    commit is what matters and it precedes the push.
+    """
+    repository = tmp_path / "checkout"
+    (repository / "scripts").mkdir(parents=True)
+    (repository / "slurm").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    for name, value in (("user.email", "t@example.com"), ("user.name", "T")):
+        subprocess.run(["git", "-C", str(repository), "config", name, value], check=True)
+    shutil.copy(ROOT / "scripts" / "github-sync.sh", repository / "scripts" / "github-sync.sh")
+    shutil.copy(ROOT / "slurm" / "config.sh", repository / "slurm" / "config.sh")
+    shutil.copy(ROOT / ".gitignore", repository / ".gitignore")
+    subprocess.run(["git", "-C", str(repository), "add", "-A"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "commit", "-qm", "base"], check=True, capture_output=True
+    )
+
+    off_tree = tmp_path / "cluster-scratch" / "runs"
+    run = off_tree / RUN_ID
+    (run / "manifests").mkdir(parents=True)
+    (run / "spec.yaml").write_text("dataset: {}\n")
+    (run / "result.yaml").write_text("status: complete\n")
+    for command in _profile_commands():
+        (run / "manifests" / f"{command}.yaml").write_text("contract_version: '2'\n")
+    # One manifest is a SYMLINK into the cluster filesystem. Without this the `120000` assertion below
+    # has nothing to catch and only looks like coverage -- a control blind to the condition it guards.
+    # `cp -R` would preserve it and commit a host path as blob content; `cp -RL` must dereference.
+    elsewhere = tmp_path / "elsewhere" / "linked.yaml"
+    elsewhere.parent.mkdir(parents=True)
+    elsewhere.write_text("contract_version: '2'\n")
+    linked = run / "manifests" / f"{_profile_commands()[0]}.yaml"
+    linked.unlink()
+    linked.symlink_to(elsewhere)
+    # The leak-carrying file must exist in the source and must NOT be among what is published.
+    (run / "command-args").mkdir()
+    (run / "command-args" / "predict.args").write_text("external_meds_dir=/data/MIMIC_MEDS\n")
+
     result = subprocess.run(
-        ["bash", str(ROOT / "slurm" / "submit.sh"), "--dry-run"],
-        cwd=ROOT,
+        ["bash", "scripts/github-sync.sh", RUN_ID],
+        cwd=repository,
         capture_output=True,
         text=True,
-        env={
-            **os.environ,
-            "RUN_ROOT": str(tmp_path / "elsewhere"),
-            "PATH": f"{ROOT / '.venv' / 'bin'}{os.pathsep}{os.environ['PATH']}",
-        },
+        env={**os.environ, "RUN_ROOT": str(off_tree)},
     )
-    assert result.returncode == 5, "an off-tree override is leak-safe but unpublishable"
-    # The message is asserted, not just the exit status. A guard that refuses correctly and then
-    # misdirects costs more than no guard, and the remedy here is counter-intuitive: the fix is to stop
-    # setting RUN_ROOT, not to set it somewhere better, because no value both stores output off-checkout
-    # and lets the publisher find it.
-    assert "unset RUN_ROOT" in result.stderr, "the guard must say what to do, not only what is wrong"
-    # This case is leak-safe, so the message must name the failure it *does* cause -- a completed run the
-    # publisher reports as incomplete -- rather than the leak, which belongs to the in-tree case.
-    assert "refusing to publish an incomplete run" in result.stderr, (
-        "it must name the failure mode this override actually produces, which reports a misleading cause"
+    assert "refusing to publish an incomplete run" not in result.stderr, (
+        f"the publisher could not find a complete run stored at {off_tree}: {result.stderr}"
     )
-    assert "external_meds_dir" not in result.stderr, (
-        "an off-tree root does not leak; naming the leak here would misdescribe the refusal"
+
+    committed = subprocess.run(
+        ["git", "-C", str(repository), "show", "--name-only", "--format=", f"runs/retain/{RUN_ID}"],
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    expected = sorted(
+        [f"runs/{RUN_ID}/manifests/{command}.yaml" for command in _profile_commands()]
+        + [f"runs/{RUN_ID}/result.yaml", f"runs/{RUN_ID}/spec.yaml"]
     )
-    # It must not blame the working directory, which is the anchored and therefore correct route.
-    assert "wrong directory" not in result.stderr
+    assert sorted(committed) == expected, (
+        f"published {committed} from an off-tree run root, expected {expected}"
+    )
+    assert not any("command-args" in path for path in committed), (
+        "the args files carry external_meds_dir and must never be published, off-tree or not"
+    )
+    # Copied, not linked: a symlink would be committed as a 120000 blob holding the host path.
+    modes = subprocess.run(
+        ["git", "-C", str(repository), "ls-tree", "-r", f"runs/retain/{RUN_ID}"],
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "120000" not in modes, f"published evidence contains a symlink rather than content:\n{modes}"
 
 
 def test_the_publisher_copies_rather_than_links_published_evidence(tmp_path):
