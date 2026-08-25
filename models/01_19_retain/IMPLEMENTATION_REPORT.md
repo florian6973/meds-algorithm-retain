@@ -1041,11 +1041,30 @@ amplifies the difference rather than evening it out. Share of the tokens the mod
 | lab results | 45.7% | 29.5% |
 | `SPECIMEN_COLLECTED` | 0.0% | 30.9% |
 
-**Vitals are 9.2x more of MIMIC's surviving input than of NWICU's.** And MIMIC carries a measurement-
-*process* family — specimen collected, with STAT/ROUTINE priority — that NWICU lacks entirely; it barely
-collapses (8.2%), so it survives bucketing almost intact and becomes ~31% of MIMIC's tokens. That is
-measurement-intensity signal available on one dataset and not the other, which is the opposite of the
-asymmetry I predicted.
+**Vitals are 9.2x more of MIMIC's surviving input than of NWICU's.** MIMIC also carries a
+measurement-*process* family that NWICU lacks entirely — `SPECIMEN_COLLECTED`, which barely collapses
+(8.2%) and so becomes ~31% of its post-bucket tokens.
+
+**I initially called that "measurement-intensity signal available on one dataset and not the other", and
+that overstates it.** Prompted by a sibling session's finding that all 976 analyte itemids appear under
+both `RESULT` and `SPECIMEN_COLLECTED` — verified here, 976 in both, zero in either alone — I checked
+whether the two are actually distinct events for this model. They are mostly not: **97.5% of
+`(subject, day, analyte)` triples carrying a RESULT also carry a collection in the same day-bucket**. So
+for the question *was this analyte measured today*, the collection token is a near-duplicate, and it
+roughly doubles MIMIC's lab token count without adding a distinct answer.
+
+What is genuinely extra is narrower and worth naming precisely:
+
+- **Ordering urgency as vocabulary.** `SPECIMEN_COLLECTED` puts STAT/ROUTINE in the fourth segment, where
+  other families put a unit — 666,629 STAT against 560,132 ROUTINE in the sample. Since this port embeds
+  whole code strings, those are different codes and the urgency is learnable. NWICU has no equivalent.
+- **A turnaround tail.** 2.5% of RESULTs have no same-day collection, i.e. the draw and the result fall in
+  different day-buckets — a real temporal signal, but a small one.
+
+**This correction makes the vitals headline conservative rather than weaker.** MIMIC's post-bucket
+denominator is inflated by that near-duplicate token stream; removing it would *raise* MIMIC's vitals
+share and widen the 9.2x, not narrow it. I have not recomputed a precise figure because the co-location
+check ran on a different shard sample, and the direction is what matters here.
 
 **A correction to the shared picture while measuring this.** The fleet note says chartevents and labs share
 `LAB//` on NWICU and are two families on MIMIC. Measured, MIMIC merges them too, just by a different
