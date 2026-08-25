@@ -940,6 +940,74 @@ numbers will be written here once they can be derived from `predictions.parquet`
 directly. Until then this row reads "not yet" rather than carrying figures whose provenance would be a
 message.
 
+## NWICU vocabulary audit
+
+Asked of every port on 2026-08-22. **Measured here, not transcribed** — `codes.parquet` is on this
+machine (`/home/fpollet/Datasets/nwicu-ext/MEDS_cohort/metadata/`), so for once the numbers are `[M]`.
+The reported counts reproduce exactly: 26,620 codes, MEDICATION 17,408 / DIAGNOSIS 8,086 / LAB 542 /
+PROCEDURE 449, `MEDICATION//START` and `//STOP` 3,738 each, both MEDS markers present.
+
+**1. Vocabulary-driven, but every threshold is inert at its defaults.** The vocabulary is fitted on the
+training split (`preprocess.py:92`) and then indexed by frequency. The two controls that could have been
+tuned against MIMIC's 148,193 codes are `min_code_count=1` and `max_vocab_size=None` — a floor that
+excludes nothing and a cap that binds nothing. `max_visits` and `lookback_days` are likewise `None`. So a
+6x smaller vocabulary produces a 6x smaller embedding matrix and changes nothing else; there is no
+threshold whose *meaning* shifts between datasets. Whether the runs used these defaults is recorded in
+each run's `config.json` and is checkable against `RETAIN_VOCABULARY_ARGS`, which defaults to empty.
+
+**2. Nothing in this port parses a code string, so the `LAB//` collision cannot bite it.** Grepped for
+prefix logic: the only `startswith` calls in `src/retain/` are hidden-file filters on *filenames*
+(`preprocess.py:45`, `windows.py:83`, `labels.py:32`). There is no `split("//")` anywhere, and the sole
+code-value test is an exact-string membership check against `("MEDS_BIRTH", "MEDS_DEATH")` — both present
+in NWICU, matched exactly, not by prefix. Codes are opaque identifiers end to end. That is the direct
+consequence of rendering this port `uses_predicates=false`, and it is why chartevents and labs sharing
+`LAB//` is a non-event here while it is a real hazard for a port that partitions by family.
+
+**3. One thing that adapts silently, and it is not a parameter — it is the vocabulary's own granularity.**
+The code string carries the unit as a third segment, so `LAB//320045//bpm` and `LAB//320045//UNK` are two
+distinct codes for one pulse measurement. This port embeds code *strings* and never parses them, so one
+physiological concept becomes **two independent embeddings**, each trained on a fraction of its
+occurrences. Since `numeric_value` is never read (section above), a chartevent contributes only *this was
+measured*, so the split fragments a presence indicator rather than a value.
+
+Measured, and the asymmetry is the point:
+
+| | NWICU | MIMIC-IV-0.7 |
+|---|---:|---:|
+| codes ending `//UNK` | 17 (0.1%) | 28,903 (19.5%) |
+| of those, chartevent itemids | **11** | — |
+
+MIMIC has vastly more unit-unknown codes in absolute terms, so this is not an NWICU-specific defect. But
+in NWICU the phenomenon lands almost entirely on the chartevent family — 11 of 17 — and that family is
+**the whole of the available physiology**: 11 itemids, 10 distinct descriptions, no ventilator settings,
+no blood gases, no GCS, no urine output. A diffuse effect on MIMIC is a total effect on the NWICU vitals.
+I have not shown this changes any score; I have shown the mechanism exists and that this port cannot
+merge the variants, because merging would require parsing exactly the code structure it deliberately
+refuses to parse.
+
+**What I cannot answer, and the measurement that would.** Whether the +0.178 clinical-to-bundle-2 swing is
+a vocabulary artefact needs the NWICU run artifacts, which are on `/groups/...` and unreachable here. The
+fields that would settle it already exist in this port's own instrumentation, per run:
+
+| field | what it answers |
+|---|---|
+| `vocabulary_size` (data manifest) | how much of the 26,620 survived the training-split fit |
+| `out_of_vocabulary_events` | signal discarded because a code was absent from the training split |
+| `n_empty_train_sequences` (model manifest) | rows reduced to the constant `sigmoid(b_output)` |
+| `event_groups` / `subjects` | visits per subject, i.e. what `visit_bucket_minutes=1440` actually bucketed |
+
+A higher empty-sequence rate on NWICU than on MIMIC would mean part of that column is the constant
+submodel rather than the model, and the two datasets are not being compared on the same thing. That is
+one read for anyone with artifact reach, and until it happens my NWICU numbers should not be treated as
+established any more than my MIMIC ones are.
+
+**A caution about one number I nearly reported.** Comparing "concepts split across more than one code" by
+taking the first two `//` segments gives 3,549 for NWICU against 3,593 for MIMIC, which looks like a
+striking equivalence. It is an artefact: for families like `DIAGNOSIS//ICD//9//4019` the second segment is
+a coding system, not a concept, so the heuristic collapses all of ICD-9 into one bucket. The chartevent
+finding above survives because those 22 codes were inspected individually. Same trap as elsewhere in this
+report — a number that is arithmetically correct about the wrong referent.
+
 ## Run artifacts no longer have to live inside the git worktree
 
 Reported from cluster ops: this port's completed results were written under
