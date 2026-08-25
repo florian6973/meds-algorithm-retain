@@ -205,6 +205,7 @@ def preprocess(meds_dir: Path, staging: Path, config: RetainConfig) -> dict[str,
         "static_events": 0,
         "meds_standard_marker_events": 0,
         "out_of_vocabulary_events": 0,
+        "same_instant_duplicate_events": 0,
         "kept_events": 0,
     }
     subjects: set[int] = set()
@@ -237,6 +238,11 @@ def preprocess(meds_dir: Path, staging: Path, config: RetainConfig) -> dict[str,
             .unique(subset=["subject_id", "time", "code_index"])
             .sort(["subject_id", "time", "code_index"])
         )
+        # Every input row must land in exactly one reported bucket, or a reader who sees a tiny
+        # out_of_vocabulary_events will conclude that little was discarded and be wrong by however
+        # many same-instant duplicates the extract happens to contain -- a quantity that differs
+        # between datasets and was, until this counter, reported by nothing.
+        totals["same_instant_duplicate_events"] += mapped.height - events.height
         totals["kept_events"] += events.height
         subjects.update(events.get_column("subject_id").unique().to_list())
         event_groups += events.select("subject_id", "time").unique().height

@@ -985,6 +985,45 @@ I have not shown this changes any score; I have shown the mechanism exists and t
 merge the variants, because merging would require parsing exactly the code structure it deliberately
 refuses to parse.
 
+**The empty-sequence hypothesis is dead, from the manifests** `[T]` (master session): `n_empty_train_sequences`
+is **0** on both NWICU and MIMIC, with OOV at 0.033% and 0.020%. So no part of either column is the
+constant `sigmoid(b_output)` submodel and the +0.178 swing is not that artefact. Worth noting this
+confirms a prediction made *before* the number existed: the counting-baseline pre-registration above
+argued `presence` would be degenerate because an empty history needs a prediction time preceding a
+subject's entire record, which these tasks do not produce. Zero empty sequences is exactly that.
+
+**Predicate surface: none, and not by omission.** A sibling port found a defect class where a predicates
+file defines a concept as a bare alias (`expr: creatinine_1`) rather than `or(...)`, which a resolver
+special-casing `or(...)` silently rejects. Unreachable here: there is no resolver, no `or(` handling, no
+`split("//")`, and `_reject_predicates` makes passing `external_predicates_file` a **hard error** on all
+three commands rather than a no-op (`commands.py:69-75`). Immunity by refusal, not by not looking.
+
+**But the accompanying method warning did land — "if you concluded nothing was dropped from one empty
+field, check its siblings."** Applied here it found a real gap. `preprocess` reported `events`,
+`static_events`, `meds_standard_marker_events`, `out_of_vocabulary_events` and `kept_events`, and those
+five **did not close**: rows removed by the same-instant dedup (`unique` on
+`(subject_id, time, code_index)`) were reported by nothing. On the standard fixture the identity held, so
+a first check said the accounting was fine — that fixture contains no same-instant duplicates and could
+not have failed. Constructed one: **2 of 5 input rows vanished unreported.**
+
+The dedup is correct and deliberate — RETAIN's input is binary, so a code repeated at one instant must
+contribute once. The defect was that a reader seeing `out_of_vocabulary_events = 0.02%` would conclude
+almost nothing was discarded, and be wrong by a quantity that **differs between datasets**, which is
+precisely what a cross-dataset comparison cannot afford. Now reported as
+`same_instant_duplicate_events`, with the identity asserted by a test whose fixture contains real
+duplicates.
+
+**A second collapse remains uncounted, and is specified here rather than left implicit.** `build_sequences`
+packs `(visit, code)` and applies `np.unique` (`windows.py:191`), so a code measured repeatedly *within one
+1440-minute bucket* contributes once — this is where **measurement frequency is discarded entirely**. The
+counting baseline in this report found that visit/bin counting recovers a large fraction of model AUROC
+across ports, i.e. measurement intensity carries real signal. RETAIN therefore discards, by construction,
+much of what the trivial baseline exploits, and how much differs with charting density — plausibly between
+MIMIC and NWICU's 11-concept chartevent family. The measurement is one line at that site,
+`window_codes.size - packed.size` accumulated per row and surfaced on `SequenceBatch`; it is not added
+here because it changes a core structure's shape and there is no run available to validate it against.
+Named so it is a known gap rather than an assumption.
+
 **What I cannot answer, and the measurement that would.** Whether the +0.178 clinical-to-bundle-2 swing is
 a vocabulary artefact needs the NWICU run artifacts, which are on `/groups/...` and unreachable here. The
 fields that would settle it already exist in this port's own instrumentation, per run:

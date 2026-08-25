@@ -424,3 +424,54 @@ def test_a_flat_extract_without_a_split_map_is_refused_rather_than_called_train(
 
     with pytest.raises(ValueError, match="flat data/ layout"):
         read_split_map(dataset)
+
+
+def test_every_input_event_is_reported_in_exactly_one_bucket(tmp_path):
+    """The totals must close, so "OOV is tiny" cannot be read as "little was discarded".
+
+    Before `same_instant_duplicate_events` existed the four named outcomes summed to less than
+    `events` whenever a code repeated at an identical timestamp, and nothing reported the difference.
+    The dedup is deliberate -- RETAIN's input is binary -- but an unreported drop differs between
+    datasets and would silently change what a cross-dataset comparison is comparing.
+
+    The fixture contains genuine same-instant duplicates on purpose: on data without them the identity
+    holds whatever the code does, which is a control blind to the condition it is checking.
+    """
+    dataset = tmp_path / "meds"
+    (dataset / "data" / "train").mkdir(parents=True)
+    (dataset / "metadata").mkdir(parents=True)
+    instant = datetime(2020, 1, 1, 12)
+    rows = [
+        {"subject_id": 1, "time": instant, "code": "A"},
+        {"subject_id": 1, "time": instant, "code": "A"},
+        {"subject_id": 1, "time": instant, "code": "A"},
+        {"subject_id": 1, "time": None, "code": "GENDER//F"},
+        {"subject_id": 1, "time": instant, "code": "MEDS_DEATH"},
+        {"subject_id": 2, "time": datetime(2020, 1, 2, 12), "code": "B"},
+    ]
+    pl.from_dicts(
+        [{"numeric_value": None, **row} for row in rows],
+        schema={
+            "subject_id": pl.Int64,
+            "time": pl.Datetime("us"),
+            "code": pl.Utf8,
+            "numeric_value": pl.Float32,
+        },
+    ).write_parquet(dataset / "data" / "train" / "0.parquet")
+    pl.DataFrame([(1, "train"), (2, "train")], schema=["subject_id", "split"], orient="row").write_parquet(
+        dataset / "metadata" / "subject_splits.parquet"
+    )
+
+    record = preprocess(dataset, _staged(tmp_path / "data"), RetainConfig())
+    assert record["same_instant_duplicate_events"] == 2, "the fixture must actually exercise the dedup"
+    named = (
+        record["static_events"]
+        + record["meds_standard_marker_events"]
+        + record["out_of_vocabulary_events"]
+        + record["same_instant_duplicate_events"]
+        + record["kept_events"]
+    )
+    assert named == record["events"], (
+        f"{record['events'] - named} input event(s) are reported by no field; the accounting must close "
+        f"or a small out_of_vocabulary_events cannot be read as a small discard"
+    )
