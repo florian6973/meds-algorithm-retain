@@ -1058,6 +1058,9 @@ What is genuinely extra is narrower and worth naming precisely:
 - **Ordering urgency as vocabulary.** `SPECIMEN_COLLECTED` puts STAT/ROUTINE in the fourth segment, where
   other families put a unit — 666,629 STAT against 560,132 ROUTINE in the sample. Since this port embeds
   whole code strings, those are different codes and the urgency is learnable. NWICU has no equivalent.
+  **Independently replicated** by another session on a larger 8-shard sample with its own script:
+  1,826,726 STAT against 1,511,797 ROUTINE, ratio 1.19 against this sample's 1.19; and the co-location
+  figures 97.5% / 2.5% exact. Two measurements, two scripts, two samples — not one number agreed with.
 - **A turnaround tail.** 2.5% of RESULTs have no same-day collection, i.e. the draw and the result fall in
   different day-buckets — a real temporal signal, but a small one.
 
