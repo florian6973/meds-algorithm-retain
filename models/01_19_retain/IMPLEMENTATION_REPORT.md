@@ -1013,6 +1013,55 @@ precisely what a cross-dataset comparison cannot afford. Now reported as
 `same_instant_duplicate_events`, with the identity asserted by a test whose fixture contains real
 duplicates.
 
+**The bucketing hypothesis, tested against the extracts rather than left as a lead.** Both are on this
+machine, so this is `[M]`. Sampled 8 `train` shards from each; a sample, not the full extract. The test
+was the cheap one — the collapse rate follows from event timestamps already on disk and needs no change
+to the model at all.
+
+**My hypothesis was half wrong, and the aggregate half is the wrong half.** I expected daily bucketing to
+discard materially more on one dataset. It does not: all timestamped events collapse **42.9% on NWICU
+against 47.1% on MIMIC** — similar, and in the direction opposite to the one that would flatter NWICU.
+As a statement about overall discard, the lead is refuted.
+
+**It holds sharply within the vitals family, which is where it mattered.**
+
+| family | NWICU | MIMIC-IV-0.7 |
+|---|---:|---:|
+| vitals/chartevents — share of raw events | 19.1% | 49.0% |
+| vitals/chartevents — collapse per day-bucket | **93.5%** | **78.4%** |
+| lab results — collapse | 20.3% | 11.7% |
+| `SPECIMEN_COLLECTED` — collapse | *absent* | 8.2% |
+
+Because the family is a different share of each dataset *and* collapses at a different rate, bucketing
+amplifies the difference rather than evening it out. Share of the tokens the model actually sees:
+
+| after 1440-min bucketing | NWICU | MIMIC |
+|---|---:|---:|
+| vitals/chartevents | 2.2% | 20.0% |
+| lab results | 45.7% | 29.5% |
+| `SPECIMEN_COLLECTED` | 0.0% | 30.9% |
+
+**Vitals are 9.2x more of MIMIC's surviving input than of NWICU's.** And MIMIC carries a measurement-
+*process* family — specimen collected, with STAT/ROUTINE priority — that NWICU lacks entirely; it barely
+collapses (8.2%), so it survives bucketing almost intact and becomes ~31% of MIMIC's tokens. That is
+measurement-intensity signal available on one dataset and not the other, which is the opposite of the
+asymmetry I predicted.
+
+**A correction to the shared picture while measuring this.** The fleet note says chartevents and labs share
+`LAB//` on NWICU and are two families on MIMIC. Measured, MIMIC merges them too, just by a different
+separator: **all 2,374 of MIMIC's numeric-itemid `LAB//` codes are chartevent itemids (2xxxxx)**, and its
+actual labs are `LAB//RESULT//<5xxxx>//<unit>` and `LAB//SPECIMEN_COLLECTED//<5xxxx>//<priority>` with the
+itemid in the *third* segment. NWICU puts the itemid in the second. So a prefix rule fails on both, in
+different ways — worth knowing for the ports that do partition by family, which this one does not.
+
+**What this establishes and what it does not.** It establishes that the two datasets present this model
+with compositionally different inputs after bucketing, measured. It does **not** establish that the
++0.178 swing is an artefact of that, and I am not claiming it does — no score was recomputed here. It
+also does not depend on the counting-baseline premise: a 9.2x difference in what survives to the model is
+a fact about the input, true whether or not measurement intensity carries the signal the baseline
+suggests. That premise is transcribed from another session's results and my own figure for it came from a
+demo fixture I declined to put in the results table, so a lead resting on it alone would have been weak.
+
 **A second collapse remains uncounted, and is specified here rather than left implicit.** `build_sequences`
 packs `(visit, code)` and applies `np.unique` (`windows.py:191`), so a code measured repeatedly *within one
 1440-minute bucket* contributes once — this is where **measurement frequency is discarded entirely**. The
