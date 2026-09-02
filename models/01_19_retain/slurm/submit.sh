@@ -58,7 +58,8 @@ if [[ -n "${STAGES:-}" ]]; then
   # stages, and would submit nothing at exit 0 -- an absent result indistinguishable from a successful
   # run. `" "` you have to construct deliberately; a bare comma is a plausible slip while editing a
   # stage list. Checked on the EMITTED list rather than on `requested`, so any future path that selects
-  # nothing is caught too. Fleet spec case 7; behrt does not have this yet and should copy it back.
+  # nothing is caught too. Fleet spec case 7, added here after the spec found it missing from the
+  # reference this filter was copied from -- so a port copying behrt directly may not have it.
   if [[ ${#commands[@]} -eq 0 ]]; then
     echo "submit.sh: STAGES='$STAGES' selected none of: ${all_commands[*]}" >&2
     echo "  Submitting nothing would exit 0 and be indistinguishable from a successful run." >&2
