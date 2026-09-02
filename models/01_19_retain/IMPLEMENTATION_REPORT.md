@@ -1218,12 +1218,39 @@ with the stage subset documented above: run the full profile once, then submit o
 and `predict` for the remaining tasks via `job.sbatch`. `RETAIN_DATA_DIR` improves that recipe by
 removing the symlink it previously required; it does not replace it.
 
-**Operational state for the eICU wave** `[T]` (cluster ops): the variable is deliberately left **unset**
-and the wave is sized at **22 preprocess runs**, because the two failure modes are not comparable — 22
-rebuilds is expensive, 22 writers on one path under `do_overwrite=true` is silently wrong, and setting
-the variable without a stage filter trades the first for the second. A `STAGES` filter for `submit.sh`
-has been requested from the master session, since that file is template-owned; the honest number until
-it exists is 22.
+**The `STAGES` filter has now landed here, so the eICU wave is one preprocess for this port, not 22.**
+`RETAIN_DATA_DIR` shares the artifact and `STAGES` stops each task rebuilding it; neither works alone.
+Cluster ops had correctly sized the wave at 22 with the variable deliberately unset, because 22 rebuilds
+is expensive while 22 writers on one path under `do_overwrite=true` is silently wrong, and the variable
+without a filter trades the first for the second.
+
+**Implementation copied from `models/02_19_behrt`, with exactly one fleet-agreed change** — a permissive
+separator (comma *or* space) instead of comma-only. Nothing else is mine: contract-order emission and
+the duplicate-collapsing `break` are behrt's.
+
+**Why behrt and not the majority.** Five ports had a filter and they did not agree. Three
+(`02_11_duett`, `03_07_meds_eic_ar`, `03_07_meds_eic_ar_sup`) iterate the *request* and append, so
+`STAGES=predict,supervised_train` submits `predict` first and `STAGES=predict,predict` submits it twice.
+Only `02_19_behrt` iterates the declared list and filters. The fleet decision initially went to the
+majority idiom; conformance case 3 below caught it and it was reversed. Measured, not eyeballed —
+`02_09_motor` turned out to declare no filter at all on published state, so the comma-only idiom is
+behrt's alone.
+
+**The severity argument that settled it.** Submissions chain with `afterok`. Caller order fails *loudly*
+against a clean run directory: `predict` runs first, finds no model, errors. It fails *silently* where
+`$RUN_DIR/model` already exists — which is the artifact-reuse case a stage filter exists for. `predict`
+runs first with no dependency, succeeds against the **stale** model, and `supervised_train` then
+overwrites the model beneath predictions already written from the previous one. No error anywhere. The
+separator axis has no silent mode at all, which is why it was the cheaper of the two to concede.
+
+`tests/test_stage_filter.py` is the fleet conformance spec: six cases, written to **travel**. It derives
+the stage list from `meds-model commands` rather than naming this model's stages, so another port can
+copy it unchanged. Mutation-checked: the majority idiom fails cases 3 and 6, and a comma-only separator
+fails case 5.
+
+**One inherited hole, documented rather than patched.** `STAGES=" "` passes the `-n` test, parses to zero
+stages, and submits nothing at exit 0. behrt has it too; fixing it here alone would create the sixth
+implementation the standard exists to prevent, so it is raised with the master session instead.
 
 `tests/test_shared_data_dir.py` pins the split. The load-bearing test uses **two** run directories
 sharing one data dir, because a single-task check cannot observe the property at all — with one run
