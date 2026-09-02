@@ -1243,14 +1243,24 @@ runs first with no dependency, succeeds against the **stale** model, and `superv
 overwrites the model beneath predictions already written from the previous one. No error anywhere. The
 separator axis has no silent mode at all, which is why it was the cheaper of the two to concede.
 
-`tests/test_stage_filter.py` is the fleet conformance spec: six cases, written to **travel**. It derives
+`tests/test_stage_filter.py` is the fleet conformance spec: seven cases, written to **travel**. It derives
 the stage list from `meds-model commands` rather than naming this model's stages, so another port can
 copy it unchanged. Mutation-checked: the majority idiom fails cases 3 and 6, and a comma-only separator
 fails case 5.
 
-**One inherited hole, documented rather than patched.** `STAGES=" "` passes the `-n` test, parses to zero
-stages, and submits nothing at exit 0. behrt has it too; fixing it here alone would create the sixth
-implementation the standard exists to prevent, so it is raised with the master session instead.
+**Case 7 was found by raising an inherited hole rather than patching it, and measuring broadened it.**
+`STAGES=" "` passes the `-n` test, parses to zero stages, and submits nothing at exit 0. Raised with the
+master session rather than fixed here, because a unilateral guard is the divergence the standard exists
+to prevent. Measured there, the hole is wider than reported: `STAGES=","` does the same, and **that** is
+the case that decides it — `" "` has to be constructed deliberately, a bare comma is a plausible slip
+while editing a stage list. Confirmed here on all three inputs before implementing.
+
+It is now spec case 7 and fixed in this port, in the reference's shape (a length check on the emitted
+list, after the emit loop) so `behrt` copies back a fixed reference rather than inventing its own guard.
+The spec already declared *an empty result is an error, not a no-op* as load-bearing; a spec that states
+a property and omits the test for it is decoration. Case 3 landed on the chosen standard, case 7 lands on
+the reference — both are the spec working rather than a problem with it. Mutation-checked: removing the
+guard fails all three inputs.
 
 `tests/test_shared_data_dir.py` pins the split. The load-bearing test uses **two** run directories
 sharing one data dir, because a single-task check cannot observe the property at all — with one run

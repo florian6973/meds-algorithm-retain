@@ -1,6 +1,6 @@
 """Fleet conformance spec for `STAGES` in `slurm/submit.sh`.
 
-Six cases. This file is written to TRAVEL: it derives the declared command list from
+Seven cases. This file is written to TRAVEL: it derives the declared command list from
 `meds-model commands` rather than naming this model's stages, so it can be copied to another port
 unchanged and will still say what that port's filter has to preserve.
 
@@ -123,3 +123,18 @@ def test_6_a_repeated_stage_is_submitted_once(declared):
     code, stages, _ = _submitted(STAGES=f"{declared[-1]},{declared[-1]}")
     assert code == 0
     assert stages == [declared[-1]]
+
+
+@pytest.mark.parametrize("value", [" ", "  ", ","])
+def test_7_a_non_empty_stages_that_selects_nothing_is_an_error(declared, value):
+    """The spec already declares "an empty result is an error, not a no-op" as load-bearing.
+
+    A spec that states a property and omits the test for it is decoration. `STAGES=","` is the case
+    that decides this: `" "` has to be constructed deliberately, but a bare comma is a plausible slip
+    while editing a stage list, and all three pass the `-n` test, parse to zero stages, and would
+    submit nothing at exit 0 -- absent output indistinguishable from a successful run.
+    """
+    code, stages, stderr = _submitted(STAGES=value)
+    assert stages == []
+    assert code == 2, f"STAGES={value!r} submitted nothing and exited {code}"
+    assert "selected none" in stderr

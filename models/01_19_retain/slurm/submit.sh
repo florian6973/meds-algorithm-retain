@@ -54,6 +54,16 @@ if [[ -n "${STAGES:-}" ]]; then
       [[ "${wanted// /}" == "$known" ]] && commands+=("$known") && break
     done
   done
+  # An empty selection is an error, not a no-op. `STAGES=","` passes the -n test above, parses to zero
+  # stages, and would submit nothing at exit 0 -- an absent result indistinguishable from a successful
+  # run. `" "` you have to construct deliberately; a bare comma is a plausible slip while editing a
+  # stage list. Checked on the EMITTED list rather than on `requested`, so any future path that selects
+  # nothing is caught too. Fleet spec case 7; behrt does not have this yet and should copy it back.
+  if [[ ${#commands[@]} -eq 0 ]]; then
+    echo "submit.sh: STAGES='$STAGES' selected none of: ${all_commands[*]}" >&2
+    echo "  Submitting nothing would exit 0 and be indistinguishable from a successful run." >&2
+    exit 2
+  fi
 else
   commands=("${all_commands[@]}")
 fi
