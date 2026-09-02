@@ -80,8 +80,9 @@ fi
 # job.sbatch runs exactly ONE command from the environment, and stage_args is a plain shell function,
 # so the subset needs no change to either template-owned file:
 #
-#   mkdir -p "$NEW/artifacts" && ln -s "$OLD/artifacts/data" "$NEW/artifacts/data"
 #   export MEDS_ROOT=... LABELS_DIR=<new task> RUN_DIR="$NEW/artifacts"
+#   export RETAIN_DATA_DIR="$SHARED/artifacts/data"   # no symlink needed
+#   mkdir -p "$NEW/artifacts" "$NEW/command-args"
 #   source slurm/config.sh
 #   for c in supervised_train predict; do stage_args "$c" > "$NEW/command-args/$c.args"; done
 #   sbatch ... --export=ALL,MEDS_MODEL_COMMAND=supervised_train,MEDS_MODEL_ARGS_FILE=...,RUN_ID=... job.sbatch
@@ -109,20 +110,35 @@ RETAIN_PREDICT_SPLITS="${RETAIN_PREDICT_SPLITS:-[held_out]}"
 # Print the implementation-specific key=value arguments for one command. Keep secrets out of this file;
 # obtain them from the submit environment.
 stage_args() {
+  # Where the tokenised patients artifact lives. Defaults inside the run, so a standalone run stays
+  # self-contained; point RETAIN_DATA_DIR at an existing artifact to reuse one preprocess_data across
+  # many per-task runs, following the fleet's <MODEL>_DATA_DIR convention.
+  #
+  # ONLY the data artifact moves. `model/` and `predict/` stay on RUN_DIR, and that is the whole point:
+  # sharing RUN_DIR itself would give every task one `model/` and one `predict/` written with
+  # do_overwrite=true, so 22 tasks would silently overwrite each other and one task's results would be
+  # presented as all of them, with no error anywhere. Asserted by
+  # tests/test_shared_data_dir.py::test_only_the_data_artifact_is_shared.
+  #
+  # RETAIN_DATA_DIR does not by itself reduce 22 preprocess runs to one: submit.sh has no stage filter,
+  # so a full-profile submission still runs preprocess_data per task, now all writing the SAME shared
+  # path with do_overwrite=true. To actually save the rebuilds, run the full profile once and then
+  # submit only the two label-dependent stages for the remaining tasks, per the recipe above.
+  local data_dir="${RETAIN_DATA_DIR:-${RUN_DIR:?set RUN_DIR}/data}"
   case "$1" in
     preprocess_data)
       printf '%s\n' \
         "external_meds_dir=${MEDS_ROOT:?set MEDS_ROOT}" \
-        "output_data_dir=${RUN_DIR:?set RUN_DIR}/data" \
+        "output_data_dir=$data_dir" \
         "do_overwrite=true"
       # shellcheck disable=SC2086
       for argument in $RETAIN_VOCABULARY_ARGS; do printf '%s\n' "$argument"; done
       ;;
     supervised_train)
       printf '%s\n' \
-        "input_data_dir=${RUN_DIR:?set RUN_DIR}/data" \
+        "input_data_dir=$data_dir" \
         "external_labels_dir=${LABELS_DIR:?set LABELS_DIR}" \
-        "output_supervised_model_dir=$RUN_DIR/model" \
+        "output_supervised_model_dir=${RUN_DIR:?set RUN_DIR}/model" \
         "do_overwrite=true"
       # shellcheck disable=SC2086
       for argument in $RETAIN_MODEL_ARGS; do printf '%s\n' "$argument"; done

@@ -1187,6 +1187,42 @@ pointing it at an existing run appears to be the sharing mechanism. It is not: `
 tasks would race to overwrite one `model/` and one `predict/`. Share the input by symlink; never share
 the run directory.
 
+## `RETAIN_DATA_DIR`: sharing one preprocess artifact across per-task runs
+
+Reported by cluster ops: this was the only port on the stack without a `<MODEL>_DATA_DIR` override, so
+per-task runs could not reuse an existing `preprocess_data` artifact. The upcoming eICU wave is 22 tasks
+per port against a 2.67B-event, 168-shard extract, and `preprocess_data` here is task-independent, so
+that is 22 rebuilds where every other port does one.
+
+**The obvious workaround is worse than the cost it avoids, and both sides found that independently.**
+Pointing `RUN_DIR` at a shared run does share `data/` — and also `model/` and `predict/`, since all three
+hang off it and every stage sets `do_overwrite=true`. Twenty-two tasks would overwrite one another in
+silence, leaving one task's model and one task's predictions presented as the full set, with no error
+anywhere. That warning was already at `slurm/config.sh:94` from the earlier reuse work; the cluster
+session reached the same conclusion from `stage_args` alone and declined to do it.
+
+**Added, following the fleet convention:** `RETAIN_DATA_DIR` moves the data artifact and nothing else.
+
+| stage | path | source |
+|---|---|---|
+| `preprocess_data` | `output_data_dir` | `$RETAIN_DATA_DIR`, else `$RUN_DIR/data` |
+| `supervised_train` | `input_data_dir` | same |
+| `supervised_train` | `output_supervised_model_dir` | **always `$RUN_DIR/model`** |
+| `predict` | `output_predictions_dir` | **always `$RUN_DIR/predict`** |
+
+**One correction to the proposed fix, which matters for sizing the wave.** `RETAIN_DATA_DIR` alone does
+*not* turn 22 preprocess runs into one. `submit.sh` has no stage filter, so a full-profile submission
+still runs `preprocess_data` per task — now with all 22 writing the *same* shared path under
+`do_overwrite=true`, which trades wasted compute for a write race. The saving comes from combining it
+with the stage subset documented above: run the full profile once, then submit only `supervised_train`
+and `predict` for the remaining tasks via `job.sbatch`. `RETAIN_DATA_DIR` improves that recipe by
+removing the symlink it previously required; it does not replace it.
+
+`tests/test_shared_data_dir.py` pins the split. The load-bearing test uses **two** run directories
+sharing one data dir, because a single-task check cannot observe the property at all — with one run
+every path is trivially distinct from the other tasks', of which there are none. Mutation-checked:
+routing `model/` through the shared directory fails it, and ignoring `RETAIN_DATA_DIR` fails it.
+
 ## Patient separation: where the split boundary is, by path
 
 Asked across the pilot on 2026-08-19. This port is `supervised`, so there is no pretrain stage. Answers
