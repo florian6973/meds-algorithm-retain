@@ -1218,6 +1218,13 @@ with the stage subset documented above: run the full profile once, then submit o
 and `predict` for the remaining tasks via `job.sbatch`. `RETAIN_DATA_DIR` improves that recipe by
 removing the symlink it previously required; it does not replace it.
 
+**Operational state for the eICU wave** `[T]` (cluster ops): the variable is deliberately left **unset**
+and the wave is sized at **22 preprocess runs**, because the two failure modes are not comparable — 22
+rebuilds is expensive, 22 writers on one path under `do_overwrite=true` is silently wrong, and setting
+the variable without a stage filter trades the first for the second. A `STAGES` filter for `submit.sh`
+has been requested from the master session, since that file is template-owned; the honest number until
+it exists is 22.
+
 `tests/test_shared_data_dir.py` pins the split. The load-bearing test uses **two** run directories
 sharing one data dir, because a single-task check cannot observe the property at all — with one run
 every path is trivially distinct from the other tasks', of which there are none. Mutation-checked:
