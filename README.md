@@ -1,5 +1,11 @@
 # RETAIN
 
+The model package lives at the root of this private repository. Clone
+[`florian6973/meds-model-retain`](https://github.com/florian6973/meds-model-retain) and run installation, test, and SLURM commands
+from the checkout root; `pyproject.toml`, `model.yaml`, `src/`, and `tests/` are here.
+Use this repository for all further model development. Earlier commits retain the historical
+`models/01_19_retain` layout; recorded historical paths and revisions remain provenance.
+
 RETAIN implemented against the minimal MEDS model contract.
 
 This repository implements the **`supervised`** model profile under version 2 of the minimal MEDS model

@@ -1620,3 +1620,24 @@ epochs, and 9% of its keys are scored at the intercept. The validation AUC recor
     remain unmeasured: vocabulary growth (replication holds `|C|` fixed, though the arithmetic puts a
     100k-code embedding at ~51 MB of parameters) and the number of prediction keys per task in the ten-task
     registry, which has not been read. The key count is what should drive the time request.
+
+## Repository-root packaging (2026-10-08)
+
+Promoted `models/01_19_retain` to the root of `florian6973/meds-model-retain` from
+`003bacb69ba901ff00c54c9d86f8aa3e9ec996d9`. Git history, source code, tests, dependency locks,
+command descriptors, and executable file modes are preserved. Merged the repository
+and model development instructions and ignore rules, and updated operational checkout paths.
+Earlier scientific results and their historical source/artifact references are unchanged.
+
+Validation performed on Windows with Python 3.12:
+
+- `uv build --wheel --out-dir <validation-directory> .` passed from the root.
+- Compared the staged files and modes against the previous package tree; implementation,
+  tests, and dependency files retain their original Git blobs.
+- Verified all Python source files are present and unchanged in the wheel, with no duplicate entries.
+- `git check-ignore` confirms root run artifacts and environments remain ignored,
+  while structured run specifications, results, and manifests remain publishable.
+- Attempted `pytest -q -rs tests/test_operations.py::test_model_yaml_is_a_meds_dev_descriptor`;
+  collection is blocked on Windows because the existing contract imports Unix-only `resource`.
+  No runtime/training validation is claimed by this layout change. Existing Linux CI now resides
+  at the repository root; real-data and cluster approval gates remain in force.
