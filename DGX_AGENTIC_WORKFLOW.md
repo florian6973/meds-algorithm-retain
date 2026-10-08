@@ -1,3 +1,9 @@
+> **Repository routing updated 2026-10-08.** All further model development must use the corresponding
+> private `florian6973/meds-model-*` repository and its `main` branch as the starting point.
+> Read the root [AGENTS.md](AGENTS.md) for the complete mapping. The `meds-models` clone URLs,
+> `model/*` branch assignments, and issue-routing examples below describe the historical pilot;
+> do not reuse them for new model work. Existing validation and real-data/cluster approval gates apply.
+
 # DGX agentic model implementation workflow
 
 This runbook coordinates independent Claude Code sessions to implement MEDS models in this repository.
