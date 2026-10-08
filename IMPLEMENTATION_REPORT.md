@@ -1641,3 +1641,22 @@ Validation performed on Windows with Python 3.12:
   collection is blocked on Windows because the existing contract imports Unix-only `resource`.
   No runtime/training validation is claimed by this layout change. Existing Linux CI now resides
   at the repository root; real-data and cluster approval gates remain in force.
+
+## CI regression fixes (2026-10-08)
+
+Base revision: `74d10089eb85e54bd576cdcf2249dc43383ef91d`.
+
+Updated the run-directory regression fixtures for the repository-root package layout. The tests accept the ignored root `runs/` directory and still reject unignored in-repository output paths, including relative overrides. Runtime guards are unchanged.
+
+Validation in a disposable Ubuntu checkout with Python 3.12, using synthetic fixtures and
+SLURM dry-run commands only:
+
+```bash
+uv sync --extra test
+uv run pytest -q -rs tests/test_run_output_is_not_committable.py::test_an_explicit_relative_run_root_is_refused_from_an_unignored_subdirectory tests/test_run_output_is_not_committable.py::test_a_run_root_inside_the_work_tree_but_elsewhere_is_always_refused
+```
+
+Result: 2 passed in 0.57s. No tests were skipped.
+
+The full GitHub Actions `Model contract` workflow runs `uv run pytest -rs` on the pushed
+revision. No MIMIC data or cluster jobs were accessed for this change.

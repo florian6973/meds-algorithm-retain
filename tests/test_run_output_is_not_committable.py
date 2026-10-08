@@ -435,16 +435,15 @@ def test_the_anchor_resolves_identically_from_the_model_directory():
     assert paths and all(path.startswith(str(ROOT / "runs")) for path in paths)
 
 
-def test_an_explicit_relative_run_root_is_still_refused_from_the_worktree_root(tmp_path):
+def test_an_explicit_relative_run_root_is_refused_from_an_unignored_subdirectory():
     """Row 4: anchoring must not accidentally launder a deliberate override into the right place.
 
-    `RUN_ROOT=runs` from the worktree root resolves to a sibling of this model, so it is refused. The
-    same value from the model directory resolves to the model's own `runs/` and is accepted -- the guard
+    `RUN_ROOT=runs` from src/ resolves outside the model's ignored runs/, so it is refused. The
+    same value from the repository root resolves to the model's own `runs/` and is accepted -- the guard
     compares resolved paths, not strings, so identical text can be right or wrong depending on cwd.
     """
-    worktree_root = ROOT.parents[1]
-    result, _ = _dry_run_args_paths(worktree_root, RUN_ROOT="runs")
-    assert result.returncode == 4, "a repo-root-relative RUN_ROOT resolves in-tree, so it would leak"
+    result, _ = _dry_run_args_paths(ROOT / "src", RUN_ROOT="runs")
+    assert result.returncode == 4, "src/runs is in-tree but outside the ignored root runs/"
 
     accepted, paths = _dry_run_args_paths(ROOT, RUN_ROOT="runs")
     assert accepted.returncode == 0, accepted.stderr
@@ -547,7 +546,7 @@ def test_a_run_root_inside_the_work_tree_but_elsewhere_is_always_refused(tmp_pat
     guard to "accept off-tree" must not be implemented as "accept anything" -- that would be permissive
     about precisely the case neither convention permits, and silent where the current behaviour is loud.
     """
-    inside_but_elsewhere = ROOT.parents[1] / "scratch-runs"
+    inside_but_elsewhere = ROOT / "scratch-runs"
     result, _ = _dry_run_args_paths(ROOT, RUN_ROOT=str(inside_but_elsewhere))
     assert result.returncode == 4, (
         f"RUN_ROOT={inside_but_elsewhere} is inside the work tree and outside the ignored model runs/; "
