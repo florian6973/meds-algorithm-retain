@@ -1,0 +1,24 @@
+
+
+
+
+
+## MEDS-DEV descriptor for RETAIN. This retains the established command-slot interface.
+## Each MEDS-DEV run directory {output_dir} holds this run's artifacts as sibling subdirectories (data/,
+## pretrained/, algorithm/, embeddings/ or trajectories/, predictions/): MEDS-DEV keeps its own cmd.sh and .done marker in
+## {output_dir}, and artifacts are published by publishing their own destination directory.
+metadata:
+  description: "RETAIN (Choi et al., NeurIPS 2016) reverse-time attention model for MEDS, a supervised classifier behind the MEDS algorithm contract."
+  contacts:
+    - name: "Florent Pollet"
+      email: "flo1.raymond@gmail.com"
+
+commands:
+  supervised:
+    train: |-
+      retain-meds preprocess_data --profile supervised external_meds_dir={dataset_dir} output_data_dir={output_dir}/data do_overwrite=true
+      retain-meds train_supervised --profile supervised input_data_dir={output_dir}/data external_labels_dir={labels_dir} output_supervised_algorithm_dir={output_dir}/algorithm
+
+    predict: |-
+      retain-meds predict_supervised --profile supervised input_data_dir="$(meds-algorithm-resolve-input {model_initialization_dir}/algorithm input_data_dir)" input_supervised_algorithm_dir={model_initialization_dir}/algorithm external_index_dir={labels_dir} splits=[{split}] output_predictions_dir={output_dir}/predictions do_overwrite=true external_evaluation_labels_dir={labels_dir}
+

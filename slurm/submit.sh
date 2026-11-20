@@ -11,76 +11,77 @@ if [[ "${1:-}" == "--dry-run" ]]; then
   shift
 fi
 
-mapfile -t all_commands < <(meds-model commands)
-if [[ -z "${all_commands[0]:-}" ]]; then
+# A cluster run must be reproducible from a commit. The refusal is here rather than in the
+# contract package because this is where the hazard is: a unit test on a modified tree is
+# normal, a multi-hour job whose code exists nowhere but one disk is not. --dry-run warns
+# instead of refusing, so a run can be prepared and reviewed before its commit is made.
+tree_status="$(git -C "$SCRIPT_DIR" status --porcelain 2>/dev/null || true)"
+if [[ -n "$tree_status" ]]; then
+  if [[ "$dry_run" == true ]]; then
+    echo "WARNING: working tree is dirty; this dry-run does not describe any commit." >&2
+  else
+    echo "Refusing to submit: the working tree is dirty, so this run would not be" >&2
+    echo "reproducible from any commit. Commit or stash first." >&2
+    git -C "$SCRIPT_DIR" status --porcelain >&2
+    exit 6
+  fi
+fi
+
+declared_text="$(retain-meds commands --profile "$PROFILE")"
+mapfile -t declared <<< "$declared_text"
+if [[ -z "${declared[0]:-}" ]]; then
   echo "No commands declared" >&2
   exit 1
 fi
 
-# STAGES selects a subset, emitted in contract order, so one shared preprocess_data artifact can serve
-# many task-specific supervised_train+predict chains -- see RETAIN_DATA_DIR in config.sh. Without this
-# the eICU wave rebuilds a 2.67B-event extract once per task instead of once.
-#
-# COPIED from models/02_19_behrt with exactly one agreed change: the separator is permissive (comma OR
-# space) rather than comma-only. Everything else is behrt's, deliberately. Contract-order emission and
-# the duplicate-collapsing `break` are the reason it is the fleet reference: iterating the *request*
-# and appending, as three other ports do, submits `predict` before `supervised_train` when asked in
-# that order. Against a clean run directory that fails loudly. Against one where $RUN_DIR/model already
-# exists -- the artifact-reuse case this filter is FOR -- predict runs first with no afterok
-# dependency, succeeds against the stale model, and supervised_train then overwrites the model beneath
-# predictions already written from the previous one. No error anywhere.
-#
-# Known hole, inherited and not patched here to avoid a sixth implementation: STAGES=" " (whitespace
-# only) passes the -n test, parses to zero stages, and submits nothing at exit 0. Raised with the
-# master session as a candidate for the fleet spec rather than fixed unilaterally.
+# STAGES submits a subset of the profile's commands (comma- or space-separated), in profile order. A task
+# bundle shares one preprocess_data and one pretrain across many tasks: run those once with SHARED_DIR set,
+# then submit only the per-task commands (e.g. STAGES=infer_trajectories,predict_zero_shot_materialized) for each task with the same SHARED_DIR.
+# Names are validated against the declared commands, so a typo fails instead of submitting nothing.
+commands=("${declared[@]}")
 if [[ -n "${STAGES:-}" ]]; then
   read -r -a requested <<< "${STAGES//,/ }"
-  commands=()
-  for wanted in "${requested[@]}"; do
-    wanted="${wanted// /}"
-    found=false
-    for known in "${all_commands[@]}"; do
-      [[ "$wanted" == "$known" ]] && found=true && break
-    done
-    if ! $found; then
-      echo "submit.sh: STAGES names '$wanted', which is not a command of this model." >&2
-      echo "  declared commands: ${all_commands[*]}" >&2
+  for stage in "${requested[@]}"; do
+    if [[ ! " ${declared[*]} " == *" $stage "* ]]; then
+      echo "STAGES names $stage, which is not a command of this profile: ${declared[*]}" >&2
       exit 2
     fi
   done
-  # Emit in contract order regardless of the order given, so dependencies chain correctly.
-  for known in "${all_commands[@]}"; do
-    for wanted in "${requested[@]}"; do
-      [[ "${wanted// /}" == "$known" ]] && commands+=("$known") && break
-    done
+  commands=()
+  for candidate in "${declared[@]}"; do
+    if [[ " ${requested[*]} " == *" $candidate "* ]]; then
+      commands+=("$candidate")
+    fi
   done
-  # An empty selection is an error, not a no-op. `STAGES=","` passes the -n test above, parses to zero
-  # stages, and would submit nothing at exit 0 -- an absent result indistinguishable from a successful
-  # run. `" "` you have to construct deliberately; a bare comma is a plausible slip while editing a
-  # stage list. Checked on the EMITTED list rather than on `requested`, so any future path that selects
-  # nothing is caught too. Fleet spec case 7, added here after the spec found it missing from the
-  # reference this filter was copied from -- so a port copying behrt directly may not have it.
-  if [[ ${#commands[@]} -eq 0 ]]; then
-    echo "submit.sh: STAGES='$STAGES' selected none of: ${all_commands[*]}" >&2
-    echo "  Submitting nothing would exit 0 and be indistinguishable from a successful run." >&2
-    exit 2
-  fi
-else
-  commands=("${all_commands[@]}")
 fi
 
 run_id="${RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-${GITHUB_SHA:-local}}"
-RUN_DIR="${RUN_DIR:-$RUN_ROOT/$run_id/artifacts}"
-export RUN_DIR
+RUN_DIR="${RUN_DIR:-$RUN_ROOT/$run_id/$PROFILE/artifacts}"
+# Task-independent artifacts (data/, pretrained/) live in SHARED_DIR; per-run artifacts (algorithm/, inference/,
+# predictions/) in RUN_DIR. Unset, both are the same directory, which is what a single-task run wants.
+SHARED_DIR="${SHARED_DIR:-$RUN_DIR}"
+export RUN_DIR SHARED_DIR
 dependency=""
+# ARGS_<command> appends algorithm-owned key=value arguments to one command without editing config.sh (which would
+# leave the tree dirty), e.g. ARGS_infer_trajectories="n_trajectories=8 max_new_tokens=4096". They are recorded in the
+# command's args file like every other argument. SBATCH_EXTRA adds sbatch flags to every job, e.g.
+# SBATCH_EXTRA="--exclude=node1,node2".
+command_args() {
+  stage_args "$1"
+  local extra_var="ARGS_$1"
+  local item
+  for item in ${!extra_var:-}; do
+    printf '%s\n' "$item"
+  done
+}
+read -r -a sbatch_extra <<< "${SBATCH_EXTRA:-}"
+
 for command in "${commands[@]}"; do
-  args_dir="$RUN_ROOT/$run_id/command-args"
+  args_dir="$RUN_ROOT/$run_id/$PROFILE/command-args"
   args_file="$args_dir/$command.args"
   if ! $dry_run; then
     mkdir -p "$args_dir"
-    stage_args "$command" > "$args_file"
-  else
-    args_file="$RUN_ROOT/$run_id/command-args/$command.args"
+    command_args "$command" > "$args_file"
   fi
   partition="$PARTITION_GPU"
   time_limit="$TIME_GPU"
@@ -94,8 +95,15 @@ for command in "${commands[@]}"; do
   if [[ -n "$dependency" ]]; then
     submit+=(--dependency="afterok:$dependency")
   fi
-  submit+=("${gres[@]}" --export="ALL,MEDS_MODEL_COMMAND=$command,MEDS_MODEL_ARGS_FILE=$args_file,RUN_ID=$run_id" "$SCRIPT_DIR/job.sbatch")
+  submit+=(${sbatch_extra[@]+"${sbatch_extra[@]}"})
+  submit+=("${gres[@]}" --export="ALL,PROFILE=$PROFILE,MEDS_ALGORITHM_COMMAND=$command,MEDS_ALGORITHM_ARGS_FILE=$args_file,RUN_ID=$run_id" "$SCRIPT_DIR/job.sbatch")
   if $dry_run; then
+    # Print what the algorithm will be told to do, not only the sbatch wrapper. Without this
+    # a --dry-run review cannot show the algorithm's arguments at all, so grepping it for a
+    # misrouted input directory returns nothing -- which is also what a correct run looks
+    # like, making the review unfalsifiable for the thing it exists to check. Written to
+    # stdout only: dry-run stays non-mutating, so no args file is produced.
+    command_args "$command" | sed "s|^|# $command: |"
     printf '%q ' "${submit[@]}"
     printf '\n'
     dependency="DRY_RUN_${command}"

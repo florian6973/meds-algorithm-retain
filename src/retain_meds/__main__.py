@@ -1,0 +1,65 @@
+"""Small backend-neutral command dispatcher."""
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+from .retain_meds import create_repository
+
+
+def _value(text: str):
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # MEDS-DEV and Hydra-style commands pass unquoted lists such as splits=[held_out].
+        if text.startswith("[") and text.endswith("]"):
+            return [_value(item.strip()) for item in text[1:-1].split(",") if item.strip()]
+        return text
+
+
+def main() -> None:
+    repository = create_repository()
+    if len(sys.argv) > 1 and sys.argv[1] == "run":
+        try:
+            from meds_algorithm.orchestration.cli import main as run_profile
+        except ImportError as error:
+            raise SystemExit('Install the runner with: pip install "retain-meds[orchestration]" (or uv sync --extra orchestration in a checkout)') from error
+        arguments = sys.argv[2:]
+        explicit_directory = any(arg == "--config-dir" or arg.startswith("--config-dir=") for arg in arguments)
+        if not explicit_directory and not (Path.cwd() / "configs" / "runs").is_dir():
+            arguments = ["--config-dir", str(Path(__file__).parent / "resources" / "runs"), *arguments]
+        run_profile(repository, module="retain_meds", argv=arguments)
+        return
+    parser = argparse.ArgumentParser(description="Run one declared MEDS algorithm profile")
+    parser.add_argument("command", help="run (prototype), profiles, commands, or a step name")
+    parser.add_argument("--profile", choices=repository.profiles)
+    parser.add_argument("arguments", nargs="*", metavar="key=value")
+    args = parser.parse_intermixed_args()
+    if args.command == "profiles":
+        if args.arguments:
+            parser.error("profiles does not accept key=value arguments")
+        print("\n".join(repository.profiles))
+        return
+    try:
+        profile = repository.select_profile(args.profile)
+        if args.command == "commands":
+            if args.arguments:
+                parser.error("commands does not accept key=value arguments")
+            print("\n".join(repository.profile_commands(profile)))
+            return
+        arguments = {}
+        for item in args.arguments:
+            if "=" not in item:
+                parser.error(f"Expected key=value, got {item!r}")
+            key, value = item.split("=", 1)
+            if not key or key in arguments:
+                parser.error(f"Empty or duplicate argument {key!r}")
+            arguments[key] = _value(value)
+        repository.run(args.command, arguments, profile=profile)
+    except (ValueError, TypeError, FileNotFoundError) as error:
+        parser.error(str(error))
+
+
+if __name__ == "__main__":
+    main()

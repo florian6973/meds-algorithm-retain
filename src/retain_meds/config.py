@@ -1,0 +1,19 @@
+"""Algorithm-owned configuration: add only source-defined, typed, immutable settings."""
+
+from dataclasses import dataclass
+
+from meds_algorithm import AlgorithmConfig
+
+
+@dataclass(frozen=True)
+class RETAINConfig(AlgorithmConfig):
+    """Add fields/defaults here and override validate() for value constraints.
+
+    Nested groups must also be frozen dataclasses. Use tuples, not mutable collections.
+    Core provides strict from_dict(), from_file(), save() and load().
+    For neural algorithms, consider NNConfig from core instead of duplicating its settings.
+    Supply source-defined defaults and document how its capacity multiplier scales the architecture;
+    call super().validate() when extending inherited constraints. See the installed architecture guide.
+    Inherited additional_predicates_file optionally extends dataset predicates during preprocessing.
+    Select it per dataset in config_file; relative paths resolve against that configuration file.
+    """
