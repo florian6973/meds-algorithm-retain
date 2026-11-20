@@ -24,7 +24,7 @@ def main() -> None:
         try:
             from meds_algorithm.orchestration.cli import main as run_profile
         except ImportError as error:
-            raise SystemExit('Install the runner with: pip install "retain-meds[orchestration]" (or uv sync --extra orchestration in a checkout)') from error
+            raise SystemExit('Install the runner with: pip install "meds-algorithm-retain[orchestration]" (or uv sync --extra orchestration in a checkout)') from error
         arguments = sys.argv[2:]
         explicit_directory = any(arg == "--config-dir" or arg.startswith("--config-dir=") for arg in arguments)
         if not explicit_directory and not (Path.cwd() / "configs" / "runs").is_dir():

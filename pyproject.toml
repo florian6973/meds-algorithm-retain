@@ -3,7 +3,7 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "retain-meds"
+name = "meds-algorithm-retain"
 version = "0.1.0"
 description = "RETAIN (Choi et al., NeurIPS 2016) reverse-time attention model for MEDS, a supervised classifier behind the MEDS algorithm contract."
 readme = "README.md"

@@ -342,6 +342,39 @@ orchestration = [
 ]
 
 [[package]]
+name = "meds-algorithm-retain"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "meds-algorithm", extra = ["data"] },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "pyarrow" },
+    { name = "pyyaml" },
+    { name = "torch" },
+]
+
+[package.optional-dependencies]
+orchestration = [
+    { name = "meds-algorithm", extra = ["orchestration"] },
+]
+test = [
+    { name = "meds-algorithm", extra = ["conformance"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "meds-algorithm", extras = ["conformance"], marker = "extra == 'test'", specifier = "==0.4.0a5" },
+    { name = "meds-algorithm", extras = ["data"], specifier = "==0.4.0a5" },
+    { name = "meds-algorithm", extras = ["orchestration"], marker = "extra == 'orchestration'", specifier = "==0.4.0a5" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "pyarrow", specifier = ">=15" },
+    { name = "pyyaml", specifier = ">=6" },
+    { name = "torch", specifier = ">=2.2" },
+]
+provides-extras = ["orchestration", "test"]
+
+[[package]]
 name = "meds-evaluation"
 version = "0.0.3"
 source = { registry = "https://pypi.org/simple" }
@@ -909,39 +942,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/f0/7a/1c7270340330e575b92f397352af856a8c06f230aa3e76f86b39d01b416a/pyyaml-6.0.3-cp314-cp314t-win_amd64.whl", hash = "sha256:4ad1906908f2f5ae4e5a8ddfce73c320c2a1429ec52eafd27138b7f1cbe341c9", size = 174062, upload-time = "2025-09-25T21:32:55.767Z" },
     { url = "https://files.pythonhosted.org/packages/f1/12/de94a39c2ef588c7e6455cfbe7343d3b2dc9d6b6b2f40c4c6565744c873d/pyyaml-6.0.3-cp314-cp314t-win_arm64.whl", hash = "sha256:ebc55a14a21cb14062aa4162f906cd962b28e2e9ea38f9b4391244cd8de4ae0b", size = 149341, upload-time = "2025-09-25T21:32:56.828Z" },
 ]
-
-[[package]]
-name = "retain-meds"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "meds-algorithm", extra = ["data"] },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", version = "2.5.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "pyarrow" },
-    { name = "pyyaml" },
-    { name = "torch" },
-]
-
-[package.optional-dependencies]
-orchestration = [
-    { name = "meds-algorithm", extra = ["orchestration"] },
-]
-test = [
-    { name = "meds-algorithm", extra = ["conformance"] },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "meds-algorithm", extras = ["conformance"], marker = "extra == 'test'", specifier = "==0.4.0a5" },
-    { name = "meds-algorithm", extras = ["data"], specifier = "==0.4.0a5" },
-    { name = "meds-algorithm", extras = ["orchestration"], marker = "extra == 'orchestration'", specifier = "==0.4.0a5" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "pyarrow", specifier = ">=15" },
-    { name = "pyyaml", specifier = ">=6" },
-    { name = "torch", specifier = ">=2.2" },
-]
-provides-extras = ["orchestration", "test"]
 
 [[package]]
 name = "scikit-learn"

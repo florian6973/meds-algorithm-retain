@@ -11,7 +11,7 @@ author_name: Florent Pollet
 implementation_source: https://proceedings.neurips.cc/paper/2016/hash/231141b34c82aa95e48810a9d1b33a79-Abstract.html
     and https://github.com/mp2893/retain@9fd39c46e44b3fdae3a667a47fbdd5ffbd87bff5
 license_expression: MIT
-package_name: retain-meds
+package_name: meds-algorithm-retain
 profiles:
 - supervised
 repository_url: https://github.com/florian6973/meds-algorithm-retain
