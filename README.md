@@ -17,7 +17,7 @@ reports which codes drove each prediction.
   temporal-leakage checks, and what was not.
 
 ```bash
-pip install retain-meds
+pip install meds-algorithm-retain
 retain-meds preprocess_data external_meds_dir=$MEDS_DIR output_data_dir=$RUN/data
 retain-meds train_supervised input_data_dir=$RUN/data external_labels_dir=$LABELS_DIR \
     output_supervised_algorithm_dir=$RUN/algorithm
@@ -95,7 +95,7 @@ Hydra multirun, multi-node training or checkpoint/resume.
 ## Publishing this algorithm
 
 Follow [the release guide](RELEASING.md) for package metadata, one-time PyPI Trusted Publisher setup,
-installed-wheel checks, and version-tag publication. All profiles ship in the `retain-meds`
+installed-wheel checks, and version-tag publication. All profiles ship in the `meds-algorithm-retain`
 distribution. Tests run in CI; publishing is an explicit workflow dispatch after implementation.
 
 ## Inputs and predicates

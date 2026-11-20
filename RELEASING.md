@@ -1,6 +1,6 @@
 # Publishing RETAIN
 
-One PyPI distribution, `retain-meds`, contains all declared profiles. Its Python import is
+One PyPI distribution, `meds-algorithm-retain`, contains all declared profiles. Its Python import is
 `retain_meds` and its executable is `retain-meds`. Publishing the
 algorithm does not require another release of the shared core or template.
 
@@ -23,7 +23,7 @@ algorithm does not require another release of the shared core or template.
 
    | Field | Value |
    |---|---|
-   | PyPI project name | `retain-meds` |
+   | PyPI project name | `meds-algorithm-retain` |
    | Owner | Your GitHub user or organization |
    | Repository | This algorithm's GitHub repository name |
    | Workflow filename | `publish.yml` |
@@ -73,7 +73,7 @@ replace only this package from TestPyPI, avoiding mixed-index dependency resolut
 uv venv /tmp/algorithm-release-check
 uv pip install --python /tmp/algorithm-release-check/bin/python dist/*.whl
 uv pip install --python /tmp/algorithm-release-check/bin/python --reinstall --no-deps \
-  --index-url https://test.pypi.org/simple/ "retain-meds==$version"
+  --index-url https://test.pypi.org/simple/ "meds-algorithm-retain==$version"
 /tmp/algorithm-release-check/bin/python -I tests/wheel_smoke.py
 gh workflow run publish.yml --repo "$repository" --ref "v$version" -f index=pypi
 gh run list --repo "$repository" --workflow publish.yml
@@ -82,7 +82,7 @@ gh run list --repo "$repository" --workflow publish.yml
 The workflow requires the matching version tag on `main` history, a committed lockfile, complete
 profiles, passing tests, and valid installed distributions. A separate job uploads those exact checked
 files using Trusted Publishing. Rehearsal and production runs each build and check their own artifacts
-from the same tag. After success, install `retain-meds==$version` in a fresh environment and
+from the same tag. After success, install `meds-algorithm-retain==$version` in a fresh environment and
 repeat the smoke check. Never move a published tag or reuse a published version; increment it for fixes.
 
 ## What installation includes

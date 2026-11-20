@@ -1,6 +1,6 @@
 # Changes
 
-## 0.1.0 (unreleased)
+## 0.1.0
 
 - RETAIN (Choi et al., NeurIPS 2016) for MEDS behind the MEDS algorithm contract, `supervised` profile:
   `preprocess_data`, `train_supervised`, `predict_supervised`.

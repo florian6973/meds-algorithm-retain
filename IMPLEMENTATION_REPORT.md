@@ -1,6 +1,6 @@
 # Implementation report: RETAIN
 
-This report describes the `retain-meds` package after its conversion from the earlier `meds-model-retain`
+This report describes the `meds-algorithm-retain` package (import `retain_meds`) after its conversion from the earlier `meds-model-retain`
 layout to the MEDS algorithm template. The model code is unchanged; the contract around it is new. The
 report of the earlier layout, with its MIMIC-IV demo, scaling and cluster evidence, is kept as
 [`docs/LEGACY_IMPLEMENTATION_REPORT.md`](docs/LEGACY_IMPLEMENTATION_REPORT.md). That evidence was produced
