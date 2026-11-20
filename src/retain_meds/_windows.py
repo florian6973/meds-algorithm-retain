@@ -22,9 +22,10 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from .config import RetainConfig
-from .labels import KEY_COLUMNS, VALUE_COLUMNS
-from .preprocess import PAYLOAD_FORMAT
+from .config import RETAINConfig
+from ._preprocess import PAYLOAD_FORMAT, SETTINGS_FILE
+
+KEY_COLUMNS = ("subject_id", "prediction_time")
 
 MICROSECONDS_PER_MINUTE = 60_000_000
 MICROSECONDS_PER_DAY = 86_400_000_000
@@ -78,7 +79,7 @@ class PatientStore:
         self.root = Path(data_dir)
         self.vocabulary = pl.read_parquet(self.root / "vocabulary.parquet")
         self.splits = pl.read_parquet(self.root / "subject_splits.parquet")
-        self.config = json.loads((self.root / "config.json").read_text())
+        self.settings = json.loads((self.root / SETTINGS_FILE).read_text())
         self.shards = sorted(
             path for path in (self.root / "sequences").rglob("*.parquet") if not path.name.startswith(".")
         )
@@ -110,10 +111,10 @@ class PatientStore:
         return ordered.get_column("code").to_list()
 
 
-def build_sequences(store: PatientStore, keys: pl.DataFrame, config: RetainConfig) -> SequenceBatch:
+def build_sequences(store: PatientStore, keys: pl.DataFrame, config: RETAINConfig) -> SequenceBatch:
     """Build one visit sequence per row of `keys`, which must hold the index columns only."""
     extra = set(keys.columns) - set(KEY_COLUMNS)
-    if extra & set(VALUE_COLUMNS) or extra:
+    if extra:
         raise ValueError(f"build_sequences must never see label columns; got extra column(s) {sorted(extra)}")
 
     keys = keys.with_columns(

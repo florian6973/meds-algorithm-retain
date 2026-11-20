@@ -13,9 +13,9 @@ import numpy as np
 import polars as pl
 import pytest
 
-from retain.config import RetainConfig
-from retain.preprocess import DECLARED_MAP_SOURCE, preprocess, read_split_map
-from retain.windows import PatientStore, build_sequences
+from retain_meds.config import RETAINConfig
+from retain_meds._preprocess import DECLARED_MAP_SOURCE, preprocess, read_split_map
+from retain_meds._windows import PatientStore, build_sequences
 
 DAY = 86_400_000_000
 
@@ -62,7 +62,7 @@ SPLITS = [(1, "train"), (2, "train"), (3, "held_out")]
 def store(tmp_path):
     dataset = _write_dataset(tmp_path / "meds", ROWS, SPLITS)
     data_dir = tmp_path / "data"
-    record = preprocess(dataset, _staged(data_dir), RetainConfig())
+    record = preprocess(dataset, _staged(data_dir), RETAINConfig())
     assert record["static_events"] == 1
     return PatientStore(data_dir), record
 
@@ -106,7 +106,7 @@ def test_the_vocabulary_is_learned_from_the_training_split_only(store):
 
 def test_held_out_codes_outside_the_vocabulary_are_dropped_not_mapped(store):
     patients, _ = store
-    batch = build_sequences(patients, _keys(3, datetime(2020, 1, 5)), RetainConfig())
+    batch = build_sequences(patients, _keys(3, datetime(2020, 1, 5)), RETAINConfig())
     # Subject 3's visit keeps `A` and silently loses the unseen code rather than folding it into a
     # shared bucket, which is what a closed vocabulary means.
     assert _visits(batch) == [(int(np.datetime64(datetime(2020, 1, 4), "us").astype(np.int64)), [0])]
@@ -114,7 +114,7 @@ def test_held_out_codes_outside_the_vocabulary_are_dropped_not_mapped(store):
 
 def test_daily_bucketing_merges_a_day_and_deduplicates_repeated_codes(store):
     patients, _ = store
-    batch = build_sequences(patients, _keys(1, datetime(2020, 1, 6)), RetainConfig())
+    batch = build_sequences(patients, _keys(1, datetime(2020, 1, 6)), RETAINConfig())
     visits = _visits(batch)
     assert [time for time, _ in visits] == [
         int(np.datetime64(datetime(2020, 1, day), "us").astype(np.int64)) for day in (1, 3, 5)
@@ -125,7 +125,7 @@ def test_daily_bucketing_merges_a_day_and_deduplicates_repeated_codes(store):
 
 def test_zero_bucket_width_keeps_every_distinct_timestamp(store):
     patients, _ = store
-    batch = build_sequences(patients, _keys(1, datetime(2020, 1, 6)), RetainConfig(visit_bucket_minutes=0))
+    batch = build_sequences(patients, _keys(1, datetime(2020, 1, 6)), RETAINConfig(visit_bucket_minutes=0))
     assert [time for time, _ in _visits(batch)] == [
         int(np.datetime64(datetime(2020, 1, 1, hour), "us").astype(np.int64)) for hour in (1, 5)
     ] + [
@@ -136,17 +136,17 @@ def test_zero_bucket_width_keeps_every_distinct_timestamp(store):
 
 def test_the_prediction_time_instant_is_included_by_default(store):
     patients, _ = store
-    at_event = build_sequences(patients, _keys(1, datetime(2020, 1, 5, 0)), RetainConfig())
+    at_event = build_sequences(patients, _keys(1, datetime(2020, 1, 5, 0)), RETAINConfig())
     assert len(_visits(at_event)) == 3
     excluded = build_sequences(
-        patients, _keys(1, datetime(2020, 1, 5, 0)), RetainConfig(include_events_at_prediction_time=False)
+        patients, _keys(1, datetime(2020, 1, 5, 0)), RETAINConfig(include_events_at_prediction_time=False)
     )
     assert len(_visits(excluded)) == 2
 
 
 def test_nothing_after_the_prediction_time_enters_the_history(store):
     patients, _ = store
-    batch = build_sequences(patients, _keys(1, datetime(2020, 1, 2)), RetainConfig())
+    batch = build_sequences(patients, _keys(1, datetime(2020, 1, 2)), RETAINConfig())
     visits = _visits(batch)
     assert len(visits) == 1
     assert visits[0][0] < int(np.datetime64(datetime(2020, 1, 2), "us").astype(np.int64))
@@ -155,7 +155,7 @@ def test_nothing_after_the_prediction_time_enters_the_history(store):
 def test_a_bucket_is_cut_at_the_prediction_time_rather_than_straddling_it(store):
     """Bucketing happens after the cut, so a partial final day carries no later events."""
     patients, _ = store
-    batch = build_sequences(patients, _keys(1, datetime(2020, 1, 1, 3)), RetainConfig())
+    batch = build_sequences(patients, _keys(1, datetime(2020, 1, 1, 3)), RETAINConfig())
     visits = _visits(batch)
     assert len(visits) == 1
     assert visits[0][1] == [patients.code_strings().index("A")]
@@ -164,7 +164,7 @@ def test_a_bucket_is_cut_at_the_prediction_time_rather_than_straddling_it(store)
 def test_lookback_drops_older_visits(store):
     patients, _ = store
     batch = build_sequences(
-        patients, _keys(1, datetime(2020, 1, 6)), RetainConfig(lookback_days=3.0)
+        patients, _keys(1, datetime(2020, 1, 6)), RETAINConfig(lookback_days=3.0)
     )
     assert [time for time, _ in _visits(batch)] == [
         int(np.datetime64(datetime(2020, 1, day), "us").astype(np.int64)) for day in (3, 5)
@@ -173,7 +173,7 @@ def test_lookback_drops_older_visits(store):
 
 def test_max_visits_keeps_the_most_recent(store):
     patients, _ = store
-    batch = build_sequences(patients, _keys(1, datetime(2020, 1, 6)), RetainConfig(max_visits=2))
+    batch = build_sequences(patients, _keys(1, datetime(2020, 1, 6)), RETAINConfig(max_visits=2))
     assert [time for time, _ in _visits(batch)] == [
         int(np.datetime64(datetime(2020, 1, day), "us").astype(np.int64)) for day in (3, 5)
     ]
@@ -181,7 +181,7 @@ def test_max_visits_keeps_the_most_recent(store):
 
 def test_a_key_before_every_event_yields_an_empty_sequence_not_a_dropped_row(store):
     patients, _ = store
-    batch = build_sequences(patients, _keys(1, datetime(2019, 1, 1)), RetainConfig())
+    batch = build_sequences(patients, _keys(1, datetime(2019, 1, 1)), RETAINConfig())
     assert batch.n_keys == 1
     assert batch.lengths.tolist() == [0]
     assert batch.n_empty == 1
@@ -190,7 +190,7 @@ def test_a_key_before_every_event_yields_an_empty_sequence_not_a_dropped_row(sto
 def test_visit_gaps_are_days_since_the_previous_visit_and_zero_at_each_first_visit(store):
     patients, _ = store
     keys = pl.concat([_keys(1, datetime(2020, 1, 6)), _keys(2, datetime(2020, 1, 6))])
-    batch = build_sequences(patients, keys, RetainConfig(use_time=True))
+    batch = build_sequences(patients, keys, RETAINConfig(use_time=True))
     np.testing.assert_allclose(batch.visit_gap_days(), [0.0, 2.0, 2.0, 0.0, 1.0])
 
 
@@ -214,12 +214,12 @@ def test_split_map_falls_back_to_the_sharded_directory_layout(tmp_path):
 def test_a_dataset_without_a_training_split_is_refused(tmp_path):
     dataset = _write_dataset(tmp_path / "meds", ROWS, [(1, "held_out"), (2, "held_out"), (3, "held_out")])
     with pytest.raises(ValueError, match="declares no 'train' split"):
-        preprocess(dataset, _staged(tmp_path / "data"), RetainConfig())
+        preprocess(dataset, _staged(tmp_path / "data"), RETAINConfig())
 
 
 def test_min_code_count_prunes_the_vocabulary(tmp_path):
     dataset = _write_dataset(tmp_path / "meds", ROWS, SPLITS)
-    record = preprocess(dataset, _staged(tmp_path / "data"), RetainConfig(min_code_count=2))
+    record = preprocess(dataset, _staged(tmp_path / "data"), RETAINConfig(min_code_count=2))
     patients = PatientStore(tmp_path / "data")
     # In the training split `A` occurs three times and `B` twice; `C` and `D` occur once each.
     assert record["vocabulary_size"] == 2
@@ -228,7 +228,7 @@ def test_min_code_count_prunes_the_vocabulary(tmp_path):
 
 def test_max_vocab_size_keeps_the_most_frequent_codes(tmp_path):
     dataset = _write_dataset(tmp_path / "meds", ROWS, SPLITS)
-    preprocess(dataset, _staged(tmp_path / "data"), RetainConfig(max_vocab_size=2))
+    preprocess(dataset, _staged(tmp_path / "data"), RETAINConfig(max_vocab_size=2))
     assert PatientStore(tmp_path / "data").code_strings()[0] == "A"
 
 
@@ -247,13 +247,13 @@ def test_meds_standard_markers_are_excluded_from_the_visit_sequence(tmp_path):
         {"subject_id": 2, "time": datetime(1955, 5, 5), "code": "MEDS_BIRTH"},
     ]
     dataset = _write_dataset(tmp_path / "meds", rows, SPLITS)
-    record = preprocess(dataset, _staged(tmp_path / "data"), RetainConfig())
+    record = preprocess(dataset, _staged(tmp_path / "data"), RETAINConfig())
     patients = PatientStore(tmp_path / "data")
     assert "MEDS_BIRTH" not in patients.code_strings()
     assert "MEDS_DEATH" not in patients.code_strings()
     assert record["meds_standard_marker_events"] == 3
 
-    batch = build_sequences(patients, _keys(1, datetime(2020, 1, 7)), RetainConfig())
+    batch = build_sequences(patients, _keys(1, datetime(2020, 1, 7)), RETAINConfig())
     # Without the exclusion the 1950 birth would be visit 0, seventy years before the rest.
     assert _visits(batch)[0][0] == int(np.datetime64(datetime(2020, 1, 1), "us").astype(np.int64))
 
@@ -261,7 +261,7 @@ def test_meds_standard_markers_are_excluded_from_the_visit_sequence(tmp_path):
 def test_the_marker_exclusion_can_be_turned_off(tmp_path):
     rows = list(ROWS) + [{"subject_id": 1, "time": datetime(1950, 5, 5), "code": "MEDS_BIRTH"}]
     dataset = _write_dataset(tmp_path / "meds", rows, SPLITS)
-    preprocess(dataset, _staged(tmp_path / "data"), RetainConfig(exclude_meds_standard_markers=False))
+    preprocess(dataset, _staged(tmp_path / "data"), RETAINConfig(exclude_meds_standard_markers=False))
     assert "MEDS_BIRTH" in PatientStore(tmp_path / "data").code_strings()
 
 
@@ -281,12 +281,12 @@ def test_a_task_anchored_on_a_subjects_first_event_is_not_empty_by_default(store
     """
     patients, _ = store
     first_event = datetime(2020, 1, 1, 1)  # subject 1's earliest event in ROWS
-    inclusive = build_sequences(patients, _keys(1, first_event), RetainConfig())
+    inclusive = build_sequences(patients, _keys(1, first_event), RETAINConfig())
     assert inclusive.n_empty == 0
     assert inclusive.lengths.tolist() == [1]
 
     strict = build_sequences(
-        patients, _keys(1, first_event), RetainConfig(include_events_at_prediction_time=False)
+        patients, _keys(1, first_event), RETAINConfig(include_events_at_prediction_time=False)
     )
     assert strict.n_empty == 1, "the strict boundary empties a first-event-anchored key"
 
@@ -354,7 +354,7 @@ def test_preprocess_refuses_an_extract_whose_placement_contradicts_its_split_map
         dataset / "metadata" / "subject_splits.parquet"
     )
     with pytest.raises(ValueError, match="contradicts itself"):
-        preprocess(dataset, _staged(tmp_path / "data"), RetainConfig())
+        preprocess(dataset, _staged(tmp_path / "data"), RETAINConfig())
 
 
 def test_a_shard_directory_that_encodes_no_split_is_not_treated_as_a_contradiction(tmp_path):
@@ -371,7 +371,7 @@ def test_a_shard_directory_that_encodes_no_split_is_not_treated_as_a_contradicti
             shard.rename(neutral / shard.name)
         (dataset / "data" / split).rmdir()
 
-    record = preprocess(dataset, _staged(tmp_path / "data"), RetainConfig())
+    record = preprocess(dataset, _staged(tmp_path / "data"), RETAINConfig())
     assert record["placement_encodes_splits"] is False
     assert record["placement_disagreements"] is None
     assert record["split_source"] == DECLARED_MAP_SOURCE
@@ -462,7 +462,7 @@ def test_every_input_event_is_reported_in_exactly_one_bucket(tmp_path):
         dataset / "metadata" / "subject_splits.parquet"
     )
 
-    record = preprocess(dataset, _staged(tmp_path / "data"), RetainConfig())
+    record = preprocess(dataset, _staged(tmp_path / "data"), RETAINConfig())
     assert record["same_instant_duplicate_events"] == 2, "the fixture must actually exercise the dedup"
     named = (
         record["static_events"]

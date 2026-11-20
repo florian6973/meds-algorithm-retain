@@ -39,7 +39,7 @@ from torch import nn
 from torch.nn import functional as F
 from torch.nn.utils import rnn as rnn_utils
 
-from .config import RetainConfig
+from .config import RETAINConfig
 
 
 @dataclass
@@ -63,7 +63,7 @@ def reverse_padded(sequence: torch.Tensor, lengths: torch.Tensor) -> torch.Tenso
 
 
 class Retain(nn.Module):
-    def __init__(self, vocabulary_size: int, config: RetainConfig) -> None:
+    def __init__(self, vocabulary_size: int, config: RETAINConfig) -> None:
         super().__init__()
         self.vocabulary_size = int(vocabulary_size)
         self.config = config

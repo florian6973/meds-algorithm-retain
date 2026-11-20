@@ -22,9 +22,13 @@ from typing import Any
 
 import polars as pl
 
-from .config import RetainConfig
+from .config import RETAINConfig
 
-PAYLOAD_FORMAT = "retain-patients/v1"
+PAYLOAD_FORMAT = "retain-patients"
+#: The settings that fixed this payload's vocabulary. `config.json` is reserved for the runner.
+SETTINGS_FILE = "preprocess.json"
+#: Settings that describe the published vocabulary and cannot change after preprocessing.
+VOCABULARY_SETTINGS = ("min_code_count", "max_vocab_size", "exclude_meds_standard_markers")
 
 TRAIN_SPLIT = "train"
 TUNING_SPLIT = "tuning"
@@ -102,14 +106,14 @@ def read_split_map_with_source(meds_dir: Path) -> tuple[pl.DataFrame, str]:
     )
 
 
-def _keeps_code(config: RetainConfig) -> pl.Expr:
+def _keeps_code(config: RETAINConfig) -> pl.Expr:
     """Row filter dropping the MEDS standard markers when configured to."""
     if not config.exclude_meds_standard_markers:
         return pl.lit(True)
     return ~pl.col("code").is_in(list(MEDS_STANDARD_MARKERS))
 
 
-def _build_vocabulary(files: list[Path], train_subjects: pl.DataFrame, config: RetainConfig) -> pl.DataFrame:
+def _build_vocabulary(files: list[Path], train_subjects: pl.DataFrame, config: RETAINConfig) -> pl.DataFrame:
     """Count codes over training subjects and assign integer indices, most frequent first."""
     counts: pl.DataFrame | None = None
     for path in files:
@@ -182,7 +186,7 @@ def _placement_agreement(
     return {"placement_encodes_splits": True, "placement_disagreements": 0}
 
 
-def preprocess(meds_dir: Path, staging: Path, config: RetainConfig) -> dict[str, Any]:
+def preprocess(meds_dir: Path, staging: Path, config: RETAINConfig) -> dict[str, Any]:
     """Write the patients payload into `staging` and return its work units."""
     meds_dir = Path(meds_dir)
     files = data_files(meds_dir)
@@ -252,7 +256,8 @@ def preprocess(meds_dir: Path, staging: Path, config: RetainConfig) -> dict[str,
 
     agreement = _placement_agreement(placement_frames, splits, meds_dir)
 
-    (staging / "config.json").write_text(json.dumps(config.to_dict(), indent=2, sort_keys=True))
+    settings = {name: getattr(config, name) for name in VOCABULARY_SETTINGS}
+    (staging / SETTINGS_FILE).write_text(json.dumps(settings, indent=2, sort_keys=True))
     return {
         "subjects": len(subjects),
         "subjects_in_split_map": splits.height,

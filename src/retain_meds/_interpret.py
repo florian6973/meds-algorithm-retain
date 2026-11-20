@@ -6,9 +6,9 @@
 explicitly. This is the interpretability claim that motivates RETAIN, so it is implemented rather than
 described; it is off by default because it costs a second pass and writes one record per scored key.
 
-The output is NDJSON on purpose. `tests/integration.py::assert_prediction_keys` concatenates every
-`*.parquet` under the predictions directory, so a second keyed parquet there would look like duplicate
-prediction keys and fail the contract's own coverage check.
+The output is NDJSON on purpose. MEDS-DEV and the conformance suite read every `*.parquet` under the
+predictions directory as predictions, so a second keyed parquet there would look like duplicate
+prediction keys and fail the coverage check.
 """
 
 from __future__ import annotations
@@ -19,10 +19,10 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .config import RetainConfig
-from .model import Retain
-from .training import collate
-from .windows import SequenceBatch
+from .config import RETAINConfig
+from ._model import Retain
+from ._training import collate
+from ._windows import SequenceBatch
 
 
 def _timestamp(microseconds: int) -> str:
@@ -34,7 +34,7 @@ def write_contributions(
     *,
     model: Retain,
     batch: SequenceBatch,
-    config: RetainConfig,
+    config: RETAINConfig,
     device: torch.device,
     code_strings: list[str],
     top_k: int,

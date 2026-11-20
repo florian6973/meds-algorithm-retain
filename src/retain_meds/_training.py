@@ -16,9 +16,9 @@ from typing import Any
 import numpy as np
 import torch
 
-from .config import RetainConfig
-from .model import Retain
-from .windows import SequenceBatch
+from .config import RETAINConfig
+from ._model import Retain
+from ._windows import SequenceBatch
 
 
 def resolve_device(selector: str) -> torch.device:
@@ -76,7 +76,7 @@ class TensorBatch:
     n_visits: int
 
 
-def collate(batch: SequenceBatch, rows: np.ndarray, config: RetainConfig, device: torch.device) -> TensorBatch:
+def collate(batch: SequenceBatch, rows: np.ndarray, config: RETAINConfig, device: torch.device) -> TensorBatch:
     """Build the `EmbeddingBag` view of `rows` and the padded grid they scatter into.
 
     A row with no history keeps a length of one so the attention softmax has a position to normalise
@@ -141,7 +141,7 @@ def _cross_entropy(logits: torch.Tensor, targets: torch.Tensor, log_eps: float) 
     ).mean()
 
 
-def _optimizer(model: Retain, config: RetainConfig) -> torch.optim.Optimizer:
+def _optimizer(model: Retain, config: RETAINConfig) -> torch.optim.Optimizer:
     parameters = model.trainable_parameters()
     if config.solver == "adam":
         # `adam()` upstream parameterises b1/b2 as 1 - beta, so b1=0.1, b2=0.001 is the usual
@@ -200,7 +200,7 @@ def _length_sorted(batch: SequenceBatch) -> np.ndarray:
 
 
 def score(
-    model: Retain, batch: SequenceBatch, config: RetainConfig, device: torch.device
+    model: Retain, batch: SequenceBatch, config: RETAINConfig, device: torch.device
 ) -> np.ndarray:
     """Probabilities for every row of `batch`, in `batch`'s own row order."""
     model.eval()
@@ -230,12 +230,13 @@ def train(
     train_labels: np.ndarray,
     validation_batch: SequenceBatch,
     validation_labels: np.ndarray,
-    config: RetainConfig,
+    config: RETAINConfig,
     device: torch.device,
+    seed: int,
 ) -> tuple[Retain, TrainingHistory]:
-    torch.manual_seed(config.seed)
-    np.random.seed(config.seed)
-    shuffler = random.Random(config.seed)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    shuffler = random.Random(seed)
 
     model = Retain(vocabulary_size, config).to(device)
     optimizer = _optimizer(model, config)

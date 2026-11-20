@@ -1,4 +1,4 @@
-"""Required model-owned proof that the implementation performs its primary behavior.
+"""Required algorithm-owned proof that the implementation performs its primary behavior.
 
 RETAIN's primary behavior is to *represent a medical code* and let it drive the prediction, with the
 visit-level attention deciding which visit that code mattered in. So proving the behavior needs three
@@ -13,107 +13,85 @@ things, not one:
 3. **Negative control.** The identical cohort with shuffled labels must *not* produce that AUC, which is
    what separates "the model learned the code" from "the fixture leaked".
 
-`tests/signal.py` randomises the signal's position and the history length independently of the label, so
-a model cannot win by exploiting position or length. That is the same defence this port needed when label
-row order was reaching the fit through `len_argsort`.
+The core signal fixture randomises the signal's position and the history length independently of the
+label, so a model cannot win by exploiting position or length.
 
-The cohort is bucketed at `visit_bucket_minutes=60` rather than the port's 1440 default. `signal.py`
+The cohort is bucketed at `visit_bucket_minutes=60` rather than the port's 1440 default. The fixture
 spaces its events one hour apart, so a daily bucket would collapse every subject to a *single* visit and
 the test would never exercise the visit attention that distinguishes RETAIN from a bag-of-codes model.
-The configuration is the model's own, not a change to the fixture.
+The configuration is the algorithm's own, not a change to the fixture.
 """
 
-from __future__ import annotations
-
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
 import polars as pl
 import pytest
+from meds_algorithm.conformance.signal import SIGNAL_CODE, build_signal_dataset
 
-torch = pytest.importorskip("torch")
+from retain_meds._training import roc_auc
+from retain_meds._windows import PatientStore, build_sequences
 
-from retain.commands import COMMANDS  # noqa: E402
-from retain.config import RetainConfig  # noqa: E402
-from retain.labels import read_labels  # noqa: E402
-from retain.training import roc_auc  # noqa: E402
-from retain.windows import PatientStore, build_sequences  # noqa: E402
-
-from .signal import SIGNAL_CODE, build_signal_dataset  # noqa: E402
+from .e2e import TASK, TEST_CONFIG, run_e2e
 
 #: One visit per hourly event, so the signal sits at a random *visit* index rather than being folded into
-#: a single multi-hot bag. Everything else is a small but real RETAIN.
-SETTINGS = {
-    "visit_bucket_minutes": 60,
-    "embed_size": 32,
-    "alpha_hidden_dim_size": 32,
-    "beta_hidden_dim_size": 32,
-    "batch_size": 32,
-    "n_epochs": 40,
-    "device": "cpu",
-}
+#: a single multi-hot bag. Everything else is a small but real RETAIN. The Eq. (5) attribution is written
+#: for every scored key so the last test can read it.
+CONFIG = replace(
+    TEST_CONFIG,
+    embed_size=32,
+    alpha_hidden_dim_size=32,
+    beta_hidden_dim_size=32,
+    n_epochs=40,
+    interpretation_top_k=1,
+)
+KEYS = ["subject_id", "prediction_time"]
 
 
-def _run_profile(root: Path, *, shuffle_labels: bool):
-    """Run the real preprocess -> supervised_train -> predict profile on the signal cohort."""
-    root = Path(root)
-    dataset = build_signal_dataset(root / "meds", shuffle_labels=shuffle_labels)
-    labels_dir = Path(dataset) / "task_labels" / "signal_task"
-    data_dir, model_dir, predictions_dir = root / "data", root / "model", root / "predictions"
-
-    COMMANDS["preprocess_data"]()(
-        {
-            "external_meds_dir": dataset,
-            "output_data_dir": data_dir,
-            "do_overwrite": True,
-            "visit_bucket_minutes": SETTINGS["visit_bucket_minutes"],
-        }
+def _run_profile(root: Path, *, profile: str, shuffle_labels: bool) -> dict:
+    """Run the real preprocess -> train -> predict profile on the signal cohort."""
+    dataset = build_signal_dataset(Path(root) / "meds", shuffle_labels=shuffle_labels)
+    labels_dir = dataset / "task_labels" / TASK
+    result = run_e2e(
+        Path(root) / "run", profile=profile, external_meds_dir=dataset, external_labels_dir=labels_dir, config=CONFIG
     )
-    COMMANDS["supervised_train"]()(
-        {
-            "input_data_dir": data_dir,
-            "external_labels_dir": labels_dir,
-            "output_supervised_model_dir": model_dir,
-            "do_overwrite": True,
-            **SETTINGS,
-        }
-    )
-    COMMANDS["predict"]()(
-        {
-            "input_supervised_model_dir": model_dir,
-            "external_labels_dir": labels_dir,
-            "output_predictions_dir": predictions_dir,
-            "splits": "[held_out]",
-            "do_overwrite": True,
-        }
-    )
-    predictions = pl.read_parquet(predictions_dir / "predictions.parquet")
+    predictions = pl.read_parquet(result.artifacts["predict_supervised"] / "predictions.parquet")
     return {
-        "dataset": Path(dataset),
-        "labels_dir": labels_dir,
-        "store": PatientStore(data_dir),
+        "labels": pl.read_parquet(sorted(labels_dir.glob("*.parquet"))).sort(KEYS),
+        "store": PatientStore(result.artifacts["preprocess_data"]),
+        "predictions_dir": result.artifacts["predict_supervised"],
         "predictions": predictions,
         "auc": roc_auc(
-            predictions.get_column("boolean_value").to_numpy(),
-            predictions.get_column("predicted_boolean_probability").to_numpy(),
+            predictions["boolean_value"].to_numpy(), predictions["predicted_boolean_probability"].to_numpy()
         ),
     }
 
 
-def _held_out_auc(result) -> float:
-    assert result["auc"] is not None, "held-out split carries only one class; AUC is undefined"
-    return float(result["auc"])
+@pytest.fixture(scope="module")
+def positive(tmp_path_factory, profile):
+    return _run_profile(tmp_path_factory.mktemp("signal-positive"), profile=profile, shuffle_labels=False)
 
 
 @pytest.fixture(scope="module")
-def positive(tmp_path_factory):
-    return _run_profile(tmp_path_factory.mktemp("signal-positive"), shuffle_labels=False)
+def shuffled(tmp_path_factory, profile):
+    return _run_profile(tmp_path_factory.mktemp("signal-shuffled"), profile=profile, shuffle_labels=True)
 
 
-@pytest.fixture(scope="module")
-def shuffled(tmp_path_factory):
-    return _run_profile(tmp_path_factory.mktemp("signal-shuffled"), shuffle_labels=True)
+def _signal_visits(batch, signal_index: int) -> list[int | None]:
+    """The visit index carrying the signal code for each key, or None."""
+    positions: list[int | None] = []
+    for row in range(batch.n_keys):
+        start, stop = int(batch.row_ptr[row]), int(batch.row_ptr[row + 1])
+        found = None
+        for visit in range(start, stop):
+            codes = batch.codes[int(batch.visit_ptr[visit]) : int(batch.visit_ptr[visit + 1])]
+            if (codes == signal_index).any():
+                found = visit - start
+                break
+        positions.append(found)
+    return positions
 
 
 def test_the_signal_code_is_bound_to_the_model_input(positive):
@@ -127,48 +105,30 @@ def test_the_signal_code_is_bound_to_the_model_input(positive):
         f"{SIGNAL_CODE} was dropped before the model ever saw it; a learning assertion after this point "
         "would be measuring something else"
     )
-    signal_index = store.code_strings().index(SIGNAL_CODE)
-
-    labels = read_labels(positive["labels_dir"])
-    config = RetainConfig(**json.loads((Path(store.root) / "config.json").read_text()))
-    batch = build_sequences(store, labels.select("subject_id", "prediction_time"), config)
-    truth = labels.get_column("boolean_value").to_numpy()
-
-    carries_signal = np.zeros(batch.n_keys, dtype=bool)
-    for row in range(batch.n_keys):
-        start, stop = int(batch.row_ptr[row]), int(batch.row_ptr[row + 1])
-        codes = batch.codes[int(batch.visit_ptr[start]) : int(batch.visit_ptr[stop])]
-        carries_signal[row] = bool((codes == signal_index).any())
+    labels = positive["labels"]
+    batch = build_sequences(store, labels.select(KEYS), CONFIG)
+    positions = _signal_visits(batch, store.code_strings().index(SIGNAL_CODE))
+    carries_signal = np.array([position is not None for position in positions])
 
     # The fixture defines the signal as present exactly for positives, so this is an equality, not a
     # correlation: it proves the windowing carried the code through without adding or losing any.
-    assert np.array_equal(carries_signal, truth.astype(bool))
+    assert np.array_equal(carries_signal, labels["boolean_value"].to_numpy())
     assert batch.lengths.min() >= 2, "hourly bucketing must produce multi-visit sequences"
 
 
 def test_the_signal_occupies_a_random_visit_position(positive):
     """The fixture's defence against a position or length leak, verified rather than assumed."""
     store = positive["store"]
-    signal_index = store.code_strings().index(SIGNAL_CODE)
-    labels = read_labels(positive["labels_dir"])
-    config = RetainConfig(**json.loads((Path(store.root) / "config.json").read_text()))
-    batch = build_sequences(store, labels.select("subject_id", "prediction_time"), config)
-    truth = labels.get_column("boolean_value").to_numpy().astype(bool)
+    labels = positive["labels"]
+    batch = build_sequences(store, labels.select(KEYS), CONFIG)
+    positions = _signal_visits(batch, store.code_strings().index(SIGNAL_CODE))
+    truth = labels["boolean_value"].to_numpy()
 
-    positions, lengths = [], []
-    for row in range(batch.n_keys):
-        start, stop = int(batch.row_ptr[row]), int(batch.row_ptr[row + 1])
-        lengths.append(stop - start)
-        for visit in range(stop - start):
-            index = start + visit
-            codes = batch.codes[int(batch.visit_ptr[index]) : int(batch.visit_ptr[index + 1])]
-            if (codes == signal_index).any():
-                positions.append(visit)
-                break
-    assert len(set(positions)) > 1, "the signal must not sit at a fixed visit index"
+    assert len({position for position in positions if position is not None}) > 1, (
+        "the signal must not sit at a fixed visit index"
+    )
     # Sequence length must not separate the classes, or a length-counting model would pass.
-    lengths = np.array(lengths)
-    assert abs(lengths[truth].mean() - lengths[~truth].mean()) < 1.0
+    assert abs(batch.lengths[truth].mean() - batch.lengths[~truth].mean()) < 1.0
 
 
 def test_primary_behavior(positive, shuffled):
@@ -176,16 +136,12 @@ def test_primary_behavior(positive, shuffled):
 
     The AUC threshold is a property of a synthetic cohort in which one code determines the label by
     construction. It is not a performance claim about RETAIN on clinical data, and nothing in this file
-    should be read as one.
-
-    Measured on this cohort at these settings: signal 0.937, shuffled 0.460, gap +0.477. The thresholds
-    sit clear of those values rather than against them. The signal AUC saturates below 1.0 for a reason
-    that is faithful rather than accidental -- `alpha` is a softmax over visits and the official `* 0.5`
-    scaling halves its logits, so attention cannot fully concentrate on the one visit that carries the
-    code. Ten epochs already reach 0.907, so the assertion is not sensitive to the epoch budget.
+    should be read as one. The signal AUC saturates below 1.0 for a reason that is faithful rather than
+    accidental: `alpha` is a softmax over visits and the official `* 0.5` scaling halves its logits, so
+    attention cannot fully concentrate on the one visit that carries the code.
     """
-    signal_auc = _held_out_auc(positive)
-    control_auc = _held_out_auc(shuffled)
+    assert positive["auc"] is not None and shuffled["auc"] is not None, "held-out split carries one class only"
+    signal_auc, control_auc = positive["auc"], shuffled["auc"]
 
     assert signal_auc > 0.85, (
         f"held-out AUC {signal_auc:.3f} on a cohort where {SIGNAL_CODE} alone determines the label: "
@@ -197,50 +153,29 @@ def test_primary_behavior(positive, shuffled):
     )
     assert signal_auc - control_auc > 0.25
 
-    # Coverage still holds on this cohort, so the AUC is computed over the whole requested index.
-    requested = read_labels(positive["labels_dir"])
-    written = positive["predictions"]
-    held_out = requested.join(
-        written.select("subject_id", "prediction_time"), on=["subject_id", "prediction_time"], how="semi"
-    )
-    assert held_out.height == written.height > 0
 
-
-def test_the_model_attributes_its_score_to_the_signal_code(positive, tmp_path):
+def test_the_model_attributes_its_score_to_the_signal_code(positive):
     """RETAIN's distinguishing claim: its own Eq. (5) attribution should name the code it learned.
 
     A model can reach a high AUC while attributing it to the wrong feature. This is the check that the
-    interpretability output -- the reason to choose RETAIN over a plain RNN -- points at the real cause.
+    interpretability output (the reason to choose RETAIN over a plain RNN) points at the real cause.
     """
-    predictions_dir = tmp_path / "interpreted"
-    COMMANDS["predict"]()(
-        {
-            "input_supervised_model_dir": Path(positive["store"].root).parent / "model",
-            "external_labels_dir": positive["labels_dir"],
-            "output_predictions_dir": predictions_dir,
-            "splits": "[held_out]",
-            "interpretation_top_k": 1,
-            "do_overwrite": True,
-        }
-    )
     records = [
-        json.loads(line) for line in (predictions_dir / "interpretation.ndjson").read_text().splitlines()
+        json.loads(line)
+        for line in (positive["predictions_dir"] / "interpretation.ndjson").read_text().splitlines()
     ]
     scored = {
-        (row["subject_id"], row["prediction_time"]): row
+        (row["subject_id"], row["prediction_time"]): row["boolean_value"]
         for row in positive["predictions"]
         .with_columns(pl.col("prediction_time").dt.strftime("%Y-%m-%dT%H:%M:%S"))
         .to_dicts()
     }
-    top_is_signal = 0
-    positives = 0
+    top_is_signal = positives = 0
     for record in records:
-        label = scored[(record["subject_id"], record["prediction_time"])]["boolean_value"]
-        if not label or not record["top_contributions"]:
+        if not scored[(record["subject_id"], record["prediction_time"])] or not record["top_contributions"]:
             continue
         positives += 1
-        if record["top_contributions"][0]["code"] == SIGNAL_CODE:
-            top_is_signal += 1
+        top_is_signal += record["top_contributions"][0]["code"] == SIGNAL_CODE
     assert positives > 0
     assert top_is_signal / positives > 0.8, (
         f"{SIGNAL_CODE} was the top-attributed code for only {top_is_signal}/{positives} positive keys; "

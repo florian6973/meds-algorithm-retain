@@ -1,12 +1,18 @@
 # This file is managed by Copier. Edit copier.yml or rerun Copier instead of editing it directly.
-_commit: 280b31d
-_src_path: /home/fpollet/Git/agentic_work/MEDS_model_template
-author_email: ffp2106@cumc.columbia.edu
+_commit: v0.4.0a2-4-g731e759
+_src_path: https://github.com/McDermottHealthAI/MEDS_algorithm_template
+algorithm_class: RETAIN
+algorithm_description: RETAIN (Choi et al., NeurIPS 2016) reverse-time attention model
+    for MEDS, a supervised classifier behind the MEDS algorithm contract.
+algorithm_name: RETAIN
+algorithm_slug: retain_meds
+author_email: flo1.raymond@gmail.com
 author_name: Florent Pollet
-implementation_source: cards/01_supervised_models/19_retain.md, https://proceedings.neurips.cc/paper/2016/hash/231141b34c82aa95e48810a9d1b33a79-Abstract.html,
-    and https://github.com/mp2893/retain
-model_description: RETAIN implemented against the minimal MEDS model contract.
-model_name: RETAIN
-model_slug: retain
-profile: supervised
+implementation_source: https://proceedings.neurips.cc/paper/2016/hash/231141b34c82aa95e48810a9d1b33a79-Abstract.html
+    and https://github.com/mp2893/retain@9fd39c46e44b3fdae3a667a47fbdd5ffbd87bff5
+license_expression: MIT
+package_name: retain-meds
+profiles:
+- supervised
+repository_url: https://github.com/florian6973/meds-algorithm-retain
 uses_predicates: false

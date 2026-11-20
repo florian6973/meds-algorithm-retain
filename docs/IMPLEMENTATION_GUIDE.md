@@ -2,91 +2,205 @@
 
 ## 1. Inspect the source
 
-Source: `cards/01_supervised_models/19_retain.md, https://proceedings.neurips.cc/paper/2016/hash/231141b34c82aa95e48810a9d1b33a79-Abstract.html, and https://github.com/mp2893/retain`
+Source: `https://proceedings.neurips.cc/paper/2016/hash/231141b34c82aa95e48810a9d1b33a79-Abstract.html and https://github.com/mp2893/retain@9fd39c46e44b3fdae3a667a47fbdd5ffbd87bff5`
 
 Read the paper, supplement, repository, configs, data preparation, checkpoints, and evaluation code.
-Build a source-element inventory before implementation; do not infer the model solely from its headline
+Build a source-element inventory before implementation; do not infer the algorithm solely from its headline
 architecture.
 
-## 2. Justify the model profile
+### Scientific ambiguities and decisions
 
-This repository selected the `supervised` model profile. Confirm that its commands match the source's actual
+Default to confirmation-required mode unless the user explicitly enabled exploratory mode in the
+implementation prompt or a later instruction. Consult the paper, supplements, official code and configs
+before deciding a detail is missing. Record conflicting sources; do not silently choose one.
+
+A routine default (such as learning rate or batch size) may be chosen, made configurable where appropriate,
+and documented unless it is central to the scientific claim. If reasonable interpretations would produce
+materially different algorithms or change what evaluation measures, treat the choice as material. Missing
+featurization, temporal aggregation, an architecture component or an objective usually meets this threshold.
+
+In confirmation-required mode, pause the dependent implementation and ask for a decision: state what is
+missing, sources consulted, options, consequences and a recommendation if justified. Continue independent
+work. Reuse an earlier explicit decision unless new evidence or scope invalidates it; silence is not approval.
+
+Explicit exploratory mode permits provisional algorithm-design choices. Record them before use, identify
+affected code/tests/results as exploratory adaptations, and require review before claiming faithful
+reproduction. It does not make assumptions source-backed facts. In both modes, unresolved leakage,
+permitted label access, cohort/target definitions or evaluation validity still block dependent work.
+Existing task constraints, acceptance tests and data/demo/full-data/cluster approval gates still apply.
+
+Maintain the mode and decisions in the existing `IMPLEMENTATION_REPORT.md` section **Scientific assumptions
+and decisions**. Record evidence and rationale for routine defaults, open questions and provisional choices,
+then append the user's decision or source resolution and update the affected implementation/results.
+
+### Reuse the source implementation
+
+Prefer reuse over reimplementation. If the source ships an installable package or executable, add it as a
+dependency pinned to the exact reviewed revision and call it; write only contract glue (label-free
+preprocessing, cohort/key adaptation, explicit key association, coverage). Resolve dependencies in this order:
+
+1. Install the source in this repository's environment. If its pins resolve but `meds-algorithm` then fails
+   within core's declared dependency ranges, that is a core bug: fix it in `meds-algorithm`, not here.
+2. If the source genuinely conflicts with core, run it as an external executable from a separate environment
+   that this package creates and manages: a committed lockfile, built at install or first use (prebuild it for
+   offline cluster nodes), with its digest recorded in manifests. MEDS-DEV installs only `requirements.txt`
+   and must not need to know about it.
+3. Reimplement only when the source cannot run even in isolation, or its code cannot meet the contract even
+   with glue, and record the reason in `IMPLEMENTATION_REPORT.md`. Local hardware is not by itself a reason: running on CPU or other hardware is
+acceptable. The package name `retain_meds` must not shadow the source's distribution or import name
+(for example `genhpf_meds`, not `genhpf`); otherwise both cannot be installed together.
+
+## 2. Justify the algorithm profile
+
+This repository declares `supervised`. Justify each profile separately. Confirm that its commands match the source's actual
 training and prediction lifecycle. Record the justification in `IMPLEMENTATION_REPORT.md`; do not change
 graphs merely to avoid implementing a stage.
 
 ## 3. Map inputs
 
-Document how MEDS events and task timepoints enter the model. If dataset predicates are useful, accept
+Document how MEDS events and task timepoints enter the algorithm. If dataset predicates are useful, accept
 `external_predicates_file`, declare which names are required, and implement their interpretation in
-model-owned code. Reuse MEDS-DEV's MIMIC predicates for the demo test. Do not create a generic feature
+algorithm-owned code. Reuse MEDS-DEV's MIMIC predicates for the demo test. Do not create a generic feature
 format in the contract package.
+
+The full-data target may be any suitable MEDS dataset, such as MIMIC-IV or NWICU. Record its name,
+revision, and MEDS location. Validate its codes, units, task definitions, and label mappings; reuse its
+MEDS-DEV predicates when available, or supply reviewed external predicates with recorded provenance.
+Keep dataset-specific mappings in configuration or algorithm-owned code. Passing the MIMIC-IV demo does not
+establish compatibility with another dataset; keep the provided demo code and predicates unchanged.
 
 ## 4. Implement commands
 
-Implement every class registered in `COMMANDS`. Preserve standard external arguments. Choose and version
-intermediate payload formats, reject incompatible inputs before expensive work, publish atomically, and
-record input digests and measurements. Frameworks, subprocesses, services, batching, and non-batched
+Read [installed core contract](../SPEC.md), then implement every selected profile method on `RETAIN` in `retain_meds.py`.
+Declare source-defined parameters/defaults in the frozen `RETAINConfig` class in `config.py`. Use
+`RETAINConfig.validate()` for constraints, and test strict serialization and reconstruction in a fresh process.
+Read the installed architecture guide with `from meds_algorithm.spec import architecture`.
+
+For neural algorithms with matching semantics, use core `NNConfig` instead of copying its shared settings.
+Supply source-defined defaults and document how the capacity multiplier maps to the reference architecture,
+including dimension rounding and minimums,
+and call `super().validate()` when adding constraints. Test that each field affects the actual algorithm.
+The installed architecture guide contains the canonical example and scaling guidance. Cohort selection
+belongs upstream; actual parameter counts and consumed data must be measured separately.
+
+For dataset-specific feature additions, set inherited `additional_predicates_file` in the selected
+configuration file. Core composes it during preprocessing, rejects duplicate names, and persists
+`resolved_feature_predicates.yaml` with provenance. Read `request.predicates_file`; do not merge again
+or write that reserved output. This does not alter task predicates, labels or cohorts. Use the same
+configuration for every lifecycle step; `ALGORITHM_CONFIG_FILE` forwards it in generated SLURM runs.
+
+Each method receives a typed request, writes its payload into `request.output.directory` (staging), and
+returns `PayloadMetadata(format, version)`. `create_repository().run(...)` invokes core's shared runner:
+it owns input validation, measurements, manifest/config/request writing, rollback and publication.
+Do not call publication helpers or write reserved metadata files inside algorithm methods. Return prediction
+keys/probabilities without ground truth; the runner alone attaches optional evaluation labels afterward.
+Extend `validate_inputs(request)` with algorithm-specific compatibility checks before expensive work.
+
+Keep code minimalist and auditable: small cohesive classes, typed immutable configuration, explicit
+dependencies and persisted fitted state. Avoid speculative abstractions, mutable global runtime state,
+hidden singletons, import-time computation and duplicated core behavior. Use the same runner from the
+CLI and `tests/e2e.py`; demonstrate independent execution after reopening serialized inputs.
+
+### Public API and internal helpers
+
+Expose the named algorithm and configuration classes for callers. Give implementation-only classes,
+functions and modules a single leading underscore, such as `_FeatureEncoder` or `_features.py`, and keep
+them out of package-level re-exports in `__init__.py`. Keep `__all__` limited to intentional public exports.
+Preserve the required names of public profile methods and integration hooks. The underscore marks an
+internal, unstable interface; Python does not enforce private access, and `__all__` does not prevent explicit
+imports. Use double-underscore name mangling only for a specific inheritance collision, not as the default
+privacy mechanism. Introduce helper classes only when their responsibilities justify a class.
+
+### Payloads and lifecycle independence
+
+Keep shared preprocessing/pretraining task-independent. Prediction must receive its prepared data or embeddings explicitly and check compatibility with
+the fitted algorithm. Probe prediction applies the head; it does not rerun the encoder. Preserve standard external arguments. Choose and version
+intermediate payload formats, reject incompatible inputs before expensive work, let the runner publish with rollback, and
+record algorithm-specific content identities in addition to its automatic provenance. Frameworks, subprocesses, services, batching, and non-batched
 systems are all allowed.
 
 ## 5. Complete operational interfaces
 
-Finalize `model.yaml`, `requirements.txt`, `tests/e2e.py`, and `slurm/config.sh`. The local adapter runs the
-real model profile. The MEDS-DEV adapter supplies its isolated invocation. The MIMIC adapter locates/builds the demo
+Finalize `algorithms/<profile>/model.yaml`, `requirements.txt`, `tests/e2e.py`, and `slurm/config.sh`.
+Configure representative config instances in `tests/conftest.py`; the acceptance suite is inherited from
+`meds-algorithm[conformance]`, so its test bodies must not be copied or overridden. The local adapter runs the
+real selected profile via `run_e2e(tmp_path, profile=..., **inputs)`. The MEDS-DEV adapter supplies its isolated invocation. The MIMIC adapter locates/builds the demo
 and the pinned `mortality/in_icu/first_24h` task through MEDS-DEV and reuses its predicates.
 
+`tests/test_conformance.py::TestConformance::test_end_to_end` also checks label leakage and transductive fitting on the same run, so the
+local adapter must:
+
+- return `E2EResult` from `meds_algorithm.conformance.types`, recording the integer `seed`, `external_meds_dir` and all task
+  inputs in `inputs`. The shared checker reruns the full lifecycle with forbidden labels removed and
+  fresh output paths. Honor every external input override; preserve permitted training/context labels.
+  `attach_ground_truth(predictions, labels_dir, splits)` supports an entirely unlabelled index.
+  Apply the same seed to every RNG, framework and subprocess; use deterministic fixture execution.
+  Original and label-blind probabilities must agree by key (`rtol=1e-6`, `atol=1e-8`), and any Boolean
+  decisions must agree exactly. Keep training labels, index and evaluation-label paths separate in
+  `inputs` when they are separate on disk; the checker sanitizes each independently.
+- apply `meds_algorithm.conformance.signal.add_split_canaries` to its MEDS fixture before running the commands, and return the
+  canaries (`E2EResult.canaries`).
+- implement `fitted_codes`: every code the algorithm fitted a population statistic for (vocabulary, frequency
+  table, selected features, bins), read from its artifacts. No canary may appear there.
+
 Complete `tests/test_primary_behavior.py`; its initial failure is intentional. The template provides the
-small `tests.signal.build_signal_dataset` example, in which one code alone predicts a binary label while
+small `meds_algorithm.conformance.signal.build_signal_dataset` example, in which one code alone predicts a binary label while
 history length and signal position do not leak the label. Use it unchanged, adapt its codes, or replace it
-when the model requires a fixed vocabulary, selected codes, predicates, derived features, numeric values,
-or another valid MEDS construction. The test must explicitly show that the signal survives the model's
-real selection/featurization layer, exercise the real model profile, and include a shuffled-label negative control.
-Use a profile-appropriate behavioral assertion: supervised/fine-tuned/probe models should learn the
-signal, while zero-shot or packaged models should demonstrate their claimed response without pretending
+when the algorithm requires a fixed vocabulary, selected codes, predicates, derived features, numeric values,
+or another valid MEDS construction. The test must explicitly show that the signal survives the algorithm's
+real selection/featurization layer, exercise the real algorithm profile, and include a shuffled-label negative control.
+Use a profile-appropriate behavioral assertion: supervised/fine-tuned/probe algorithms should learn the
+signal, while zero-shot or predict_only algorithms should demonstrate their claimed response without pretending
 to train.
 
 ## 6. Follow the staged verification workflow
 
 Advance in this order. Each automated stage must pass before the next one starts.
 
-1. **Local gate:** run `uv run pytest -rs`. This exercises the contract and the model-owned basic
+1. **Local gate:** run `uv run pytest -rs`. This exercises the contract and the algorithm-owned basic
    end-to-end adapter on a small synthetic fixture. Return `E2EResult` from that adapter so the test can
    compare actual prediction keys with the requested label index and evaluated splits. It also runs the
    required primary-behavior test; structural conformance alone does not pass this gate.
 2. **MEDS-DEV gate:** run `uv run pytest -m meds_dev -rs`. This verifies installation and the command
-   strings in `model.yaml` through MEDS-DEV's isolated execution path. Return `MEDSDevRun` from its adapter
+   strings in `algorithms/<profile>/model.yaml` through MEDS-DEV's isolated execution path. Return `MEDSDevRun` from its adapter
    with the invocation, prediction directory, requested label index, and evaluated splits.
 3. **Pre-demo report and human gate:** complete the source ledger, scientific deviations, input mapping,
-   predicate interpretation, the results from the first two gates, and the proposed MIMIC execution plan
+   predicate interpretation, the results from the first two gates, and the proposed MIMIC-IV demo execution plan
    in `IMPLEMENTATION_REPORT.md`. Ask a human to review this evidence and the selected predicates before
    accessing or running MIMIC-IV.
 4. **MIMIC-IV demo gate:** after approval, run `uv run pytest -m real_data -rs`. This builds or reuses the
    MEDS-DEV demo, derives labels with `mortality/in_icu/first_24h`, reuses MEDS-DEV's MIMIC-IV predicates,
-   and runs the complete selected model profile. The purpose is to expose scale-dependent pipeline, resource,
+   and runs the complete selected algorithm profile. The purpose is to expose scale-dependent pipeline, resource,
    serialization, and key-coverage failures before a full-data run.
 5. **Demo report and human gate:** add the exact demo revision, task and predicate provenance, cohort
    counts, prediction-key coverage, measurements, failures, and fixes to the report. A human decides
-   whether the evidence is sufficient, reviews the shared full-data task bundle, and approves the full
-   MIMIC-IV resources and launch.
+   whether the evidence is sufficient, reviews target-dataset/task/predicate compatibility and the shared
+   full-data task bundle, and approves access, resources, and launch for the selected full dataset.
 6. **Commit and synchronize:** before submitting cluster jobs, commit the implementation, configuration,
    and report-so-far; push the commit to GitHub; and record its immutable commit SHA. The cluster must run
    that SHA from a clean checkout. The external task bundle is not committed.
-7. **Full MIMIC-IV run:** run the approved ten-task registry from
-   [meds-task-selection](https://github.com/florian6973/meds-task-selection) on the authorized full dataset,
-   normally through the SLURM interface. The cluster receives a shared `work/` task bundle containing
-   `tasks.yaml` and the generated per-task inputs/labels. Pass its path explicitly in configuration; do not
-   copy it into the model repository. Record the task-selection commit, `tasks.yaml` SHA-256, task bundle
-   identifier/path, dataset revision, model commit, exact command/configuration, job IDs, and structured run
-   evidence. Every model comparison must use the same reviewed bundle. Do not treat the demo result as a
-   scientific result.
+7. **Full target-dataset run:** run the approved shared task bundle for the selected dataset on the
+   authorized full dataset, normally through the SLURM interface. The bundle is built once upstream, for
+   every algorithm alike. Its tasks are either clinical tasks defined and extracted with
+   [ACES](https://eventstreamaces.readthedocs.io/), or randomly sampled code-by-horizon tasks (generated with
+   [meds-random-task-sampler](https://github.com/florian6973/meds-random-task-sampler) and selected with
+   [meds-task-selection](https://github.com/florian6973/meds-task-selection)). It contains each
+   task's definition and its per-task index/labels; zero-shot algorithms also need each task's ACES criteria.
+   If a compatible bundle is not available, report that blocker before launching. Pass its path
+   explicitly in configuration; do not copy it into the algorithm repository. Record the commit of the tool
+   that built the bundle, a digest of its task definitions, the bundle identifier/path, dataset
+   name/revision, predicate provenance, algorithm commit, exact command/configuration, job IDs, and structured
+   run evidence. Every algorithm comparison on the same dataset must use the same
+   reviewed bundle. Do not treat the demo result as a scientific result.
 8. **Final report and result synchronization:** add per-task and aggregate full-data cohort/output counts,
    measurements, scientific results, deviations, failures, and limitations. Run `scripts/github-sync.sh
    <run-id>` to publish the structured result on its isolated run branch and open a draft PR for human
-   review. Raw MIMIC data, labels containing sensitive data, checkpoints, credentials, and raw logs remain
+   review. Raw dataset records, labels containing sensitive data, checkpoints, credentials, and raw logs remain
    outside Git.
 
 Final predictions at every data gate must exactly cover the requested keys without relying on order. Do
 not assert portable performance thresholds; record wall time, process-tree PSS/RSS, GPU metrics,
-environment, and scale. Remove all placeholders and set `IS_STUB = False` only when the implemented model profile
+environment, and scale. Remove all placeholders and remove each profile from `STUB_PROFILES` only when that profile
 passes the applicable pre-demo gates; real-data access remains separately human-approved.
 
 ### MIMIC-IV demo task scope
@@ -98,8 +212,8 @@ remaining a single deterministic smoke test.
 MEDS-DEV also currently declares these MIMIC-IV-supported candidates: anemia, leukocytosis,
 thrombocytopenia, hypotension, hyponatremia, metabolic acidosis, and elevated creatinine, all under their
 respective `abnormal_lab/.../first_24h` task paths. They are optional task-coverage tests, not required demo
-gates. Add one only when it is relevant to the model and its task definition resolves cleanly against the
+gates. Add one only when it is relevant to the algorithm and its task definition resolves cleanly against the
 current MEDS-DEV MIMIC predicates and produces a non-degenerate demo cohort. Record the exact task revision
 rather than copying its dataset knowledge into this repository. These demo tasks are independent of the
-ten-task full-data benchmark: the demo validates execution and scale transition, while the frozen
-full-data task bundle supports consistent model evaluation.
+full-data task bundle: the demo validates execution and scale transition, while the frozen full-data
+bundle supports consistent algorithm evaluation.
