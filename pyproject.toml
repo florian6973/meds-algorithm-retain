@@ -12,7 +12,16 @@ license = "MIT"
 license-files = ["LICENSE*"]
 
 requires-python = ">=3.11"
-dependencies = ["pyyaml>=6", "meds-algorithm[data]==0.4.0a5"]
+dependencies = [
+  "pyyaml>=6",
+  "meds-algorithm[data]==0.4.0a5",
+  # torch carries the model itself: the official implementation is Theano 0.8 on Python 2.7, which is not
+  # installable today, and `nn.GRU` is gate-for-gate identical to its `gru_layer` (see _model.py).
+  "torch>=2.2",
+  # numpy holds the ragged visit sequences; pyarrow backs the polars Parquet reads and writes.
+  "numpy>=1.26",
+  "pyarrow>=15",
+]
 
 [project.optional-dependencies]
 orchestration = ["meds-algorithm[orchestration]==0.4.0a5"]
@@ -35,6 +44,8 @@ packages = ["src/retain_meds"]
 
 [tool.hatch.build.targets.sdist]
 include = ["/src", "/configs/runs", "/algorithms", "/tests", "/scripts", "/docs", "/README.md", "/RELEASING.md", "/CHANGELOG.md", "/LICENSE*", "/pyproject.toml", "/uv.lock"]
+# The earlier layout's report records private cluster and dataset details; keep it out of the archive.
+exclude = ["/docs/LEGACY_IMPLEMENTATION_REPORT.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,5 +1,33 @@
 # RETAIN
 
+RETAIN ([Choi et al., NeurIPS 2016](https://proceedings.neurips.cc/paper/2016/hash/231141b34c82aa95e48810a9d1b33a79-Abstract.html))
+for datasets in the [Medical Event Data Standard](https://github.com/Medical-Event-Data-Standard/meds): a
+reverse-time attention model that predicts a binary outcome from a subject's sequence of visits and
+reports which codes drove each prediction.
+
+- **What it runs:** `preprocess_data` (code vocabulary fitted on the training split), `train_supervised`
+  (the whole model, for one task) and `predict_supervised` (one probability per requested key).
+- **Model:** a PyTorch reimplementation of the official Theano code
+  ([`mp2893/retain`](https://github.com/mp2893/retain) @ `9fd39c46`), with the official defaults, checked
+  against a NumPy transcription of the official equations.
+- **MEDS adaptation:** a visit is the set of codes in one time bucket (`visit_bucket_minutes`, default one
+  day), and each history is cut at its prediction time before visits are formed. No dataset predicates
+  are needed.
+- **Status:** [IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md) lists what was verified, including the
+  temporal-leakage checks, and what was not.
+
+```bash
+pip install retain-meds
+retain-meds preprocess_data external_meds_dir=$MEDS_DIR output_data_dir=$RUN/data
+retain-meds train_supervised input_data_dir=$RUN/data external_labels_dir=$LABELS_DIR \
+    output_supervised_algorithm_dir=$RUN/algorithm
+retain-meds predict_supervised input_data_dir=$RUN/data input_supervised_algorithm_dir=$RUN/algorithm \
+    external_index_dir=$LABELS_DIR splits=[held_out] output_predictions_dir=$RUN/predictions
+```
+
+Settings are the fields of `RETAINConfig` (`src/retain_meds/config.py`); pass a YAML or JSON file of
+overrides to every step with `config_file=<path>`.
+
 ## Python API and named command
 
 The implementation is `src/retain_meds/retain_meds.py`, with configuration in `config.py`.

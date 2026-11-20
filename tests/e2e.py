@@ -1,44 +1,140 @@
 """Algorithm-owned profile execution and fitted-feature inspection adapters."""
+
 from collections.abc import Mapping
 from pathlib import Path
+
+import polars as pl
+from meds_algorithm.conformance.signal import add_split_canaries, build_signal_dataset
 from meds_algorithm.conformance.types import E2EResult, MEDSDevRun
 
-def run_e2e(tmp_path, *, profile: str, **inputs):
-    """Run every selected step into tmp_path, honoring all external inputs and split overrides.
+from retain_meds import RETAINConfig
+from retain_meds.retain_meds import create_repository
 
-    Use create_repository().run(...) (the same typed runner as the CLI) for every step.
-    Use a fresh algorithm instance/process; reopen fitted artifacts instead of keeping hidden state.
-    Return E2EResult with seed, external_meds_dir and all task inputs recorded in inputs. Apply the seed
-    to every RNG/framework/subprocess and use deterministic fixture settings. Conformance compares
-    keyed scores across reruns (rtol=1e-6, atol=1e-8); stochastic production runs remain algorithm-owned.
-    Conformance reruns
-    this hook with evaluated outcomes removed. Reuse supplied histories, not an old prepared artifact;
-    emit fresh artifacts below tmp_path. Training/context splits retain their permitted labels.
+TASK = "signal_task"
 
-    Temporal cutoff: conformance also reruns this hook with ``external_meds_dir`` replaced by a copy in which
-    every evaluated subject's events after its latest prediction time are rewritten
-    (meds_algorithm.conformance.temporal.perturb_future); predictions must be bit-identical. It also calls
-    this hook with a null-world dataset (``metadata/dataset.json`` names it ``null_world``; codes
-    ``NULL//...``) whose future is independent of its past, and requires held-out AUROC at chance. Run that
-    dataset with the same small, offline test settings as the fixture.
+#: A small but real RETAIN for offline tests: the published architecture at reduced width, on CPU so two
+#: runs are bit-identical. Visits are hourly rather than daily because the signal fixture and the null world
+#: space their events hours apart; a daily bucket would fold most histories into one or two visits and
+#: never exercise the visit attention.
+TEST_CONFIG = RETAINConfig(
+    visit_bucket_minutes=60,
+    embed_size=16,
+    alpha_hidden_dim_size=16,
+    beta_hidden_dim_size=16,
+    batch_size=32,
+    n_epochs=3,
+    device="cpu",
+)
+
+
+def build_fixture(root: Path, *, seed: int = 0, shuffle_labels: bool = False, **signal) -> tuple[Path, dict]:
+    """Core signal dataset plus the split canaries of the transductive-fitting check."""
+    build_signal_dataset(root, seed=seed, shuffle_labels=shuffle_labels, **signal)
+    return root, add_split_canaries(root)
+
+
+def run_e2e(
+    tmp_path,
+    *,
+    profile: str,
+    seed: int = 0,
+    external_meds_dir=None,
+    external_labels_dir=None,
+    external_index_dir=None,
+    external_evaluation_labels_dir=None,
+    external_predicates_file=None,
+    splits=("held_out",),
+    config: RETAINConfig = TEST_CONFIG,
+):
+    """Run preprocess -> train -> predict through the core runner, each with a fresh algorithm instance.
+
+    RETAIN consumes no predicates; a supplied predicates file is recorded as an input only. The seed is
+    passed to every step and is the only source of randomness (initialisation, dropout, batch order).
     """
-    raise NotImplementedError(
-        "Prepare a small MEDS input/task, execute the selected algorithm profile's real commands, and return "
-        "E2EResult(artifacts, labels_dir, evaluated splits, external inputs used, "
-        "canaries from meds_algorithm.conformance.signal.add_split_canaries applied to the fixture)."
+    tmp_path = Path(tmp_path)
+    canaries = {}
+    if external_meds_dir is None:
+        external_meds_dir, canaries = build_fixture(tmp_path / "fixture", seed=seed)
+        external_labels_dir = external_labels_dir or external_meds_dir / "task_labels" / TASK
+    if external_labels_dir is None:
+        raise ValueError("external_labels_dir is required with an external MEDS dataset")
+    external_index_dir = external_index_dir or external_labels_dir
+    external_evaluation_labels_dir = external_evaluation_labels_dir or external_index_dir
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    common = {"seed": seed, "config_file": str(config.save(tmp_path / "config.json"))}
+
+    repository = create_repository()
+    artifacts = {
+        "preprocess_data": tmp_path / "data",
+        "train_supervised": tmp_path / "algorithm",
+        "predict_supervised": tmp_path / "predictions",
+    }
+    repository.run(
+        "preprocess_data",
+        {"external_meds_dir": str(external_meds_dir), "output_data_dir": str(artifacts["preprocess_data"]), **common},
+        profile=profile,
+    )
+    repository.run(
+        "train_supervised",
+        {
+            "input_data_dir": str(artifacts["preprocess_data"]),
+            "external_labels_dir": str(external_labels_dir),
+            "output_supervised_algorithm_dir": str(artifacts["train_supervised"]),
+            **common,
+        },
+        profile=profile,
+    )
+    repository.run(
+        "predict_supervised",
+        {
+            "input_data_dir": str(artifacts["preprocess_data"]),
+            "input_supervised_algorithm_dir": str(artifacts["train_supervised"]),
+            "external_index_dir": str(external_index_dir),
+            "splits": list(splits),
+            "output_predictions_dir": str(artifacts["predict_supervised"]),
+            "external_evaluation_labels_dir": str(external_evaluation_labels_dir),
+            **common,
+        },
+        profile=profile,
+    )
+    inputs = {
+        "seed": seed,
+        "external_meds_dir": Path(external_meds_dir),
+        "external_labels_dir": Path(external_labels_dir),
+        "external_index_dir": Path(external_index_dir),
+        "external_evaluation_labels_dir": Path(external_evaluation_labels_dir),
+        "config": config,
+    }
+    if external_predicates_file is not None:
+        inputs["external_predicates_file"] = Path(external_predicates_file)
+    return E2EResult(
+        artifacts=artifacts,
+        labels_dir=Path(external_index_dir),
+        splits=list(splits),
+        inputs=inputs,
+        canaries=canaries,
     )
 
 
 def fitted_codes(artifacts: Mapping[str, Path]) -> set[str]:
-    """Return every code the algorithm fitted a population statistic for: its vocabulary, frequency tables,
-    selected features, or bins.
-
-    The transductive-fitting check requires the split canaries to be absent from this set (SPEC section
-    2.1). Read it from the algorithm's own artifacts; the payload formats are algorithm-owned.
-    """
-    raise NotImplementedError("Report the codes the algorithm fitted, read from its artifacts")
+    """RETAIN's only fitted population statistic: the vocabulary learned by preprocess_data."""
+    vocabulary = pl.read_parquet(Path(artifacts["preprocess_data"]) / "vocabulary.parquet")
+    return set(vocabulary["code"].to_list())
 
 
 def prepare_meds_dev_run(meds_dev, tmp_path, *, profile: str):
-    """Return ``MEDSDevRun(args, predictions_dir, labels_dir, splits)`` for this implementation."""
-    raise NotImplementedError("Configure the selected algorithm profile's real MEDS-DEV run")
+    """Train on the synthetic fixture and predict its held-out split through MEDS-DEV's full mode."""
+    dataset, _ = build_fixture(Path(tmp_path) / "fixture")
+    labels_dir = dataset / "task_labels" / TASK
+    output_dir = Path(tmp_path) / "meds-dev-run"
+    args = [
+        "mode=full",
+        "dataset_type=supervised",
+        f"dataset_dir={dataset}",
+        f"labels_dir={labels_dir}",
+        "dataset_name=synthetic_signal",
+        f"task_name={TASK}",
+        f"output_dir={output_dir}",
+    ]
+    predictions_dir = output_dir / "synthetic_signal" / TASK / "predict" / "predictions"
+    return MEDSDevRun(args=args, predictions_dir=predictions_dir, labels_dir=labels_dir, splits=["held_out"])

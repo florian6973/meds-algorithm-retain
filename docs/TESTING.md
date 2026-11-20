@@ -68,3 +68,15 @@ control the intended code. The generated config round-trip test alone does not p
 
 Keep a short what/why entry here for each added scientific test. Report exact pass/skip counts and
 explain remaining skips. Completing another profile must not mask missing evidence in an existing one.
+
+### RETAIN's own tests
+
+| Test module | What it checks | Why |
+|---|---|---|
+| `tests/test_model_fidelity.py` | The batched PyTorch model equals a NumPy transcription of the official `build_model`, with and without visit durations; a sequence scores the same alone and inside a padded batch; an empty history scores the learned intercept; attention sums to one over real visits; the recurrent bias Theano does not have stays zero; the AUC equals its pairwise definition. | Padding, packing, the two reversals and the attention mask must be bookkeeping, not model changes. |
+| `tests/test_data_path.py` | Vocabulary fitted on the training split only; out-of-vocabulary codes dropped and counted; visit bucketing and deduplication; nothing after the prediction time enters a history and no visit straddles it; `lookback_days` and `max_visits`; empty histories kept; split-map resolution and its refusals; every input event accounted for. | These are the internal temporal cutoffs and the MEDS adaptation, which the shared suite sees only through predictions. |
+| `tests/test_primary_behavior.py` | The signal code reaches the vocabulary and the input of exactly the positive keys at a varying visit index; held-out AUC above 0.85 with the signal and below 0.75 with shuffled labels; the Eq. (5) attribution names the signal code. | Proves the model responds to a code it received, and explains its score with that code. |
+
+The temporal-leakage checks (future-rewrite rerun and null world) are part of the shared suite from the
+`meds-algorithm` release after 0.4.0a5. Until the pin moves, run them against core main with the command in
+`IMPLEMENTATION_REPORT.md` (section *Temporal leakage*).

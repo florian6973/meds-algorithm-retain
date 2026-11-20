@@ -14,10 +14,10 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from retain.config import RetainConfig  # noqa: E402
-from retain.model import Retain  # noqa: E402
-from retain.training import collate, roc_auc, score  # noqa: E402
-from retain.windows import SequenceBatch  # noqa: E402
+from retain_meds.config import RETAINConfig  # noqa: E402
+from retain_meds._model import Retain  # noqa: E402
+from retain_meds._training import collate, roc_auc, score  # noqa: E402
+from retain_meds._windows import SequenceBatch  # noqa: E402
 
 
 def _sigmoid(x):
@@ -127,7 +127,7 @@ def _batch_from(sequences, times=None):
 
 
 def _model(**overrides):
-    config = RetainConfig(
+    config = RETAINConfig(
         embed_size=6, alpha_hidden_dim_size=5, beta_hidden_dim_size=4, batch_size=4, **overrides
     )
     torch.manual_seed(0)
@@ -245,11 +245,11 @@ def test_roc_auc_is_undefined_for_a_single_class():
 
 
 def test_sequence_construction_refuses_to_see_ground_truth():
-    from retain.windows import build_sequences
+    from retain_meds._windows import build_sequences
 
     frame = pl.DataFrame(
         {"subject_id": [1], "prediction_time": [None], "boolean_value": [True]},
         schema={"subject_id": pl.Int64, "prediction_time": pl.Datetime("us"), "boolean_value": pl.Boolean},
     )
     with pytest.raises(ValueError, match="never see label columns"):
-        build_sequences(None, frame, RetainConfig())
+        build_sequences(None, frame, RETAINConfig())
